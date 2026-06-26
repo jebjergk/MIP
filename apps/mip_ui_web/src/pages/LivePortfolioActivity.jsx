@@ -1167,6 +1167,38 @@ export default function LivePortfolioActivity() {
     })
   }, [finalizeCommitteeRevalidation])
 
+  const runRevalidateForSubmit = useCallback(async (actionId) => {
+    setBusy(`revalidate:${actionId}`)
+    setError('')
+    setNotice('')
+    try {
+      const revalResp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/revalidate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force_refresh_1m: true }),
+      })
+      const body = await revalResp.json().catch(() => null)
+      if (!revalResp.ok) {
+        throw new Error(messageFromApiFailure(body, 'Revalidation is currently blocked.'))
+      }
+      const nextStatus = String(body?.status || '').toUpperCase()
+      setNotice(
+        nextStatus === 'REVALIDATED_PASS'
+          ? `Revalidation passed for ${actionId}. Submit is now enabled if all gates are clear.`
+          : `Revalidation finished with status ${nextStatus || 'unknown'}.`,
+      )
+      await load({ silent: true })
+      if (nextStatus === 'REVALIDATED_PASS') {
+        setReadyPulseActionId(actionId)
+        setTimeout(() => setReadyPulseActionId(''), 20000)
+      }
+    } catch (e) {
+      setError(e.message || 'Revalidation failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load])
+
   const submitOnly = useCallback(async (actionId) => {
     // Phase 3A: real-money confirmation gate (temporary UI guard).
     // NOTE: window.confirm is NOT sufficient for the first real-money pilot.
@@ -1739,6 +1771,10 @@ export default function LivePortfolioActivity() {
                         && d.proposal_freshness
                         && String(d.proposal_freshness).toUpperCase() !== 'CURRENT'
                       )
+                      const canRunRevalidateForSubmit = !proposalIsStale && [
+                        'INTENT_APPROVED',
+                        'REVALIDATED_FAIL',
+                      ].includes(statusUpper)
                       const canRunCommittee = !proposalIsStale && [
                         'RESEARCH_IMPORTED',
                         'PROPOSED',
@@ -2405,6 +2441,17 @@ export default function LivePortfolioActivity() {
                                   ? 'Refresh decision'
                                   : 'Run Intelligence Review'}
                             </button>
+                            {canRunRevalidateForSubmit ? (
+                              <button
+                                type="button"
+                                className="lpa-btn lpa-btn-secondary"
+                                disabled={busy === `revalidate:${d.action_id}`}
+                                onClick={() => runRevalidateForSubmit(d.action_id)}
+                                title="Price-check against latest market bar and enable Submit when gates pass."
+                              >
+                                {busy === `revalidate:${d.action_id}` ? 'Revalidating…' : 'Revalidate for Submit'}
+                              </button>
+                            ) : null}
                           </>
                           )
                         ) : (
@@ -2457,7 +2504,9 @@ export default function LivePortfolioActivity() {
                               : isStructuralEntry && proposalIsStale
                                 ? 'Submit is permanently blocked for this row — the proposal is from a superseded board run. Use Reject this action above.'
                                 : isStructuralEntry
-                                  ? 'Run Intelligence Review refreshes the evidence dossier and runs the Agentic Committee. After committing the agentic verdict, Submit enables when REVALIDATED_PASS.'
+                                  ? statusUpper === 'INTENT_APPROVED' || statusUpper === 'REVALIDATED_FAIL'
+                                    ? 'Intelligence Review is complete. Click Revalidate for Submit to price-check and reach REVALIDATED_PASS.'
+                                    : 'Run Intelligence Review refreshes the evidence dossier and runs the Agentic Committee. After committing the agentic verdict, Submit enables when REVALIDATED_PASS.'
                                   : isStructuralExit
                                     ? 'Replay execution verdict (SSE) materializes the execution-only structural exit check. Submit enables when REVALIDATED_PASS.'
                                     : isStructuralC20

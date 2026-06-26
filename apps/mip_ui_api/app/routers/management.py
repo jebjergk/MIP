@@ -1102,8 +1102,11 @@ def cockpit_ops_status():
                        (SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT tv
                          WHERE tv.RUN_ID = r.RUN_ID) AS VERDICTS
                   FROM MIP.APP.PROPOSAL_BOARD_RUN r
-                 WHERE r.RUN_STATUS = 'RUNNING'
-                    OR r.STARTED_AT >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+                 WHERE r.STARTED_AT >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+                    OR (
+                        r.RUN_STATUS = 'RUNNING'
+                        AND r.STARTED_AT >= DATEADD('minute', -90, CURRENT_TIMESTAMP())
+                    )
                  ORDER BY r.STARTED_AT DESC
                  LIMIT 3
                 """

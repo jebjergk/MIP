@@ -2712,6 +2712,49 @@ def _committee_bracket_baseline_snapshot(joint_decision: dict | None) -> dict:
     }
 
 
+def _seed_executable_bracket_from_joint_decision(
+    cur,
+    action_id: str,
+    joint_decision: dict | None,
+    *,
+    bust_pct_default: float | None = None,
+    meta: dict | None = None,
+) -> bool:
+    """Persist TP/SL on PARAM_SNAPSHOT from structural joint_decision.
+
+    Trailing-stop entries still require executable TP/SL percentages for IB
+    bracket construction and LPA submit gating. Qty sizing may happen later.
+    """
+    target_return, stop_loss_pct, _src = _live_target_and_stop_from_joint_decision(
+        joint_decision, bust_pct_default
+    )
+    if (
+        target_return is None
+        or stop_loss_pct is None
+        or float(target_return) <= 0
+        or float(stop_loss_pct) <= 0
+    ):
+        return False
+    seed_meta = {"seed": "structural_joint_decision", **(meta or {})}
+    _merge_live_action_param_snapshot_patch(
+        cur,
+        action_id,
+        {
+            "committee_bracket_baseline": _committee_bracket_baseline_snapshot(
+                joint_decision if isinstance(joint_decision, dict) else None
+            ),
+            "executable_bracket": {
+                "target_return": float(target_return),
+                "stop_loss_pct": float(stop_loss_pct),
+                "calibrated": False,
+                "blocked": False,
+                "meta": seed_meta,
+            },
+        },
+    )
+    return True
+
+
 def _merge_live_action_param_snapshot_patch(cur, action_id: str, patch: dict) -> None:
     action = _fetch_live_action(cur, action_id)
     if not action:
@@ -2775,7 +2818,9 @@ def _merge_structural_contract_and_diagnostics(
         and not eb.get("blocked")
     )
     contract_complete = (not entry_like) or (tr_ok and sl_ok and not has_blocked_eb and eb_has_legs)
-    if entry_like and has_blocked_eb:
+    if entry_like and tr_ok and sl_ok and eb_has_legs and not has_blocked_eb:
+        contract_complete = True
+    elif entry_like and has_blocked_eb:
         contract_complete = False
     diagnostics = {
         "routed_structural": True,
@@ -2839,6 +2884,9 @@ def _apply_post_committee_entry_viability_and_qty(
     cfg_rows = fetch_all(cur)
     live_cfg = cfg_rows[0] if cfg_rows else {}
     if not _live_execution_requires_ib_risk_gates(live_cfg):
+        _seed_executable_bracket_from_joint_decision(
+            cur, action_id, joint_decision, bust_pct_default=bust_pct_default,
+        )
         return committee_qty, reason_codes
 
     side_u = str(side or "").upper()
@@ -2975,6 +3023,13 @@ def _apply_post_committee_entry_viability_and_qty(
         )
     else:
         _merge_live_action_param_snapshot_patch(cur, action_id, baseline_snapshot)
+        _seed_executable_bracket_from_joint_decision(
+            cur,
+            action_id,
+            joint_decision,
+            bust_pct_default=bust_pct_default,
+            meta={"without_qty": committee_qty is None},
+        )
 
     risk_codes = _live_ib_entry_risk_reason_codes(
         side=side_u,
@@ -11442,10 +11497,24 @@ def _materialize_structural_entry_agentic_apply(
                 and eb_ref.get("stop_loss_pct") is not None
                 and not eb_ref.get("blocked")
             )
+            if tr_ok and sl_ok and not eb_ok:
+                _seed_executable_bracket_from_joint_decision(cur, action_id, jd)
+                refreshed = _fetch_live_action(cur, action_id)
+                ps_ref = _parse_variant((refreshed or {}).get("PARAM_SNAPSHOT"))
+                eb_ref = ps_ref.get("executable_bracket") if isinstance(ps_ref, dict) else None
+                eb_ok = (
+                    isinstance(eb_ref, dict)
+                    and eb_ref.get("target_return") is not None
+                    and eb_ref.get("stop_loss_pct") is not None
+                    and not eb_ref.get("blocked")
+                )
             if not (tr_ok and sl_ok and eb_ok):
                 bracket_block = True
                 if "STRUCT_SUBMIT_CONTRACT_INCOMPLETE" not in reason_codes:
                     reason_codes.append("STRUCT_SUBMIT_CONTRACT_INCOMPLETE")
+            elif bracket_block:
+                reason_codes = _strip_recomputable_entry_bracket_codes(reason_codes)
+                bracket_block = any(_is_entry_bracket_hard_block_code(rc) for rc in reason_codes)
         if bracket_block and not recovery_late_stage:
             blocked = True
             next_status = "OPEN_BLOCKED"
@@ -13497,19 +13566,15 @@ def revalidate_live_action(
             else quote_freshness_threshold_sec
         )
         refresh_info = {"attempted": False}
+        direct_ibkr_one_min = None
+        refresh_fallback_codes: list[str] = []
         if req.force_refresh_1m:
             refresh_info = _force_refresh_latest_one_minute_bars(cur, symbol)
-            if str(refresh_info.get("status") or "").upper() != "SUCCESS":
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "message": "IBKR direct 1m refresh failed, revalidation blocked.",
-                        "reason_codes": ["IBKR_DIRECT_REFRESH_FAILED"],
-                        "refresh": refresh_info,
-                    },
-                )
+            if str(refresh_info.get("status") or "").upper() == "SUCCESS":
+                direct_ibkr_one_min = _extract_latest_one_min_bar_from_refresh(refresh_info, symbol)
+            else:
+                refresh_fallback_codes.append("IBKR_DIRECT_REFRESH_FAILED")
 
-        direct_ibkr_one_min = _extract_latest_one_min_bar_from_refresh(refresh_info, symbol) if req.force_refresh_1m else None
         source = "IBKR_DIRECT_1M" if direct_ibkr_one_min else "ONE_MINUTE_BAR"
         if direct_ibkr_one_min:
             ref_ts, ref_price = direct_ibkr_one_min
@@ -13565,7 +13630,12 @@ def revalidate_live_action(
         now_utc = datetime.now(timezone.utc)
         bar_age_sec = (now_utc - ref_ts_utc).total_seconds()
         market_open_now = _is_extended_trading_open_ny(now_utc)
-        if bar_age_sec > effective_entry_bar_age_threshold_sec and not is_exit and market_open_now:
+        if (
+            bar_age_sec > effective_entry_bar_age_threshold_sec
+            and not is_exit
+            and market_open_now
+            and source != "BAR_FALLBACK"
+        ):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -13600,13 +13670,21 @@ def revalidate_live_action(
             "EXECUTION_PARTIAL",
         ):
             existing_reason_codes = _strip_recomputable_entry_bracket_codes(existing_reason_codes)
-        reason_codes: list[str] = []
+        reason_codes: list[str] = list(refresh_fallback_codes)
         reduced_size_factor = None
         target_open_condition_factor = 1.0
         if is_exit and bar_age_sec > quote_freshness_threshold_sec:
             reason_codes.append("EXIT_REVALIDATION_STALE_BAR_BYPASS")
         if (not is_exit) and (not market_open_now) and bar_age_sec > effective_entry_bar_age_threshold_sec:
             reason_codes.append("REVALIDATION_STALE_BAR_OUTSIDE_SESSION_ALLOWED")
+        if (
+            (not is_exit)
+            and source == "BAR_FALLBACK"
+            and bar_age_sec > effective_entry_bar_age_threshold_sec
+        ):
+            reason_codes.append("REVALIDATION_DAILY_BAR_FALLBACK")
+            target_open_condition_factor = min(float(target_open_condition_factor), 0.85)
+            reduced_size_factor = 0.75
         if source == "IBKR_DIRECT_1M":
             reason_codes.append("REVALIDATION_PRICE_FROM_IBKR_DIRECT")
             rp = refresh_info.get("payload") if isinstance(refresh_info, dict) else None
@@ -17897,6 +17975,13 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
 
             action_id = str(uuid.uuid4())
             _import_ts = datetime.now(timezone.utc).isoformat()
+            proposed_price_import = _structural_ref_price_for_bracket(
+                {
+                    "ENTRY_ZONE_LOW": p.get("ENTRY_ZONE_LOW"),
+                    "ENTRY_ZONE_HIGH": p.get("ENTRY_ZONE_HIGH"),
+                    "CURRENT_PRICE": p.get("CURRENT_PRICE"),
+                }
+            )
             param_snapshot_structural = json.dumps(
                 {
                     "structural_source": True,
@@ -17913,7 +17998,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                 """
                 INSERT INTO MIP.LIVE.LIVE_ACTIONS (
                     ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, BROKER_NAME, IBKR_ACCOUNT_ID, BROKER_UNIVERSE_TYPE,
-                    SYMBOL, SIDE,
+                    SYMBOL, SIDE, PROPOSED_PRICE,
                     ACTION_INTENT, STATUS,
                     VALIDITY_WINDOW_END, ASSET_CLASS,
                     COMMITTEE_REQUIRED, COMMITTEE_STATUS,
@@ -17944,7 +18029,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                 )
                 SELECT
                     %s, %s, %s, %s, %s, %s,
-                    %s, %s,
+                    %s, %s, %s,
                     %s, 'PENDING_OPEN_VALIDATION',
                     DATEADD(SECOND, %s, CURRENT_TIMESTAMP()), %s,
                     TRUE, 'PENDING',
@@ -17969,7 +18054,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                 (
                     action_id, proposal_id, req.live_portfolio_id,
                     structural_broker_name, ibkr_account_id, structural_universe_type,
-                    symbol, side,
+                    symbol, side, proposed_price_import,
                     action_intent,
                     int(validity_window_sec) if validity_window_sec else 14400, p.get("MARKET_TYPE"),
                     param_snapshot_structural,
@@ -17989,6 +18074,34 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     p.get("LATEST_BAR_DATE"), p.get("CURRENT_PRICE"), freshness["distance_to_entry_zone"],
                     freshness["setup_still_valid"], freshness["price_moved_too_far"], freshness["freshness_assessment"],
                 ),
+            )
+
+            seed_row = dict(p_norm)
+            seed_row.update(
+                {
+                    "ACTION_ID": action_id,
+                    "PORTFOLIO_ID": req.live_portfolio_id,
+                    "SYMBOL": symbol,
+                    "SIDE": side,
+                    "DIRECTION": direction,
+                    "PROPOSED_PRICE": proposed_price_import,
+                    "INVALIDATION_LEVEL": p.get("INVALIDATION_LEVEL"),
+                    "INVALIDATION_RULE": p.get("INVALIDATION_RULE"),
+                    "ENTRY_ZONE_LOW": p.get("ENTRY_ZONE_LOW"),
+                    "ENTRY_ZONE_HIGH": p.get("ENTRY_ZONE_HIGH"),
+                    "MAX_HOLD_BARS": max_hold,
+                    "EXPECTED_HOLD_CHARACTER": hold_character,
+                    "EXIT_STYLE": p.get("EXIT_STYLE"),
+                    "TRAIL_STYLE": p_norm.get("TRAIL_STYLE"),
+                    "TRAIL_ACTIVATION_TYPE": p.get("TRAIL_ACTIVATION_TYPE"),
+                    "TRAIL_ACTIVATION_PARAM": p.get("TRAIL_ACTIVATION_PARAM"),
+                }
+            )
+            _seed_executable_bracket_from_joint_decision(
+                cur,
+                action_id,
+                build_structural_entry_joint_decision(seed_row),
+                meta={"import_seed": True},
             )
 
             _append_learning_ledger_event(

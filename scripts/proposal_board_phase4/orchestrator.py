@@ -1966,6 +1966,73 @@ def _persist_final_slate(
     )
 
 
+def _reap_zombie_board_runs(cur, max_age_minutes: int = 90) -> int:
+    """Mark stale RUNNING board rows failed so Cockpit polling cannot latch them."""
+    cur.execute(
+        """
+        UPDATE MIP.APP.PROPOSAL_BOARD_RUN
+           SET RUN_STATUS = 'FAILED',
+               FINISHED_AT = CURRENT_TIMESTAMP(),
+               ERROR_JSON = OBJECT_CONSTRUCT(
+                   'reason_code', 'ZOMBIE_RUN_REAPED',
+                   'message', 'Run exceeded max age while RUNNING — marked failed by reaper.',
+                   'max_age_minutes', %(max_age)s
+               )
+         WHERE RUN_STATUS = 'RUNNING'
+           AND STARTED_AT < DATEADD('minute', -%(max_age)s, CURRENT_TIMESTAMP())
+        """,
+        {"max_age": max_age_minutes},
+    )
+    return cur.rowcount
+
+
+def _normalize_published_broker_stops(cur, run_id: str) -> int:
+    """Map structural invalidation (often inside entry zone) to broker stop outside zone.
+
+    Setup events store PRICE_INVALIDATION_LEVEL at the structural break level,
+    which frequently sits inside the entry band. LPA execution requires the
+    broker stop below (LONG) or above (SHORT) the entry zone edges.
+    """
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET PRICE_INVALIDATION_LEVEL = CASE
+                   WHEN p.DIRECTION = 'LONG'
+                        AND p.ENTRY_ZONE_LOW IS NOT NULL
+                        AND (
+                            p.PRICE_INVALIDATION_LEVEL IS NULL
+                            OR p.PRICE_INVALIDATION_LEVEL >= p.ENTRY_ZONE_LOW
+                        )
+                       THEN p.ENTRY_ZONE_LOW * 0.985
+                   WHEN p.DIRECTION = 'SHORT'
+                        AND p.ENTRY_ZONE_HIGH IS NOT NULL
+                        AND (
+                            p.PRICE_INVALIDATION_LEVEL IS NULL
+                            OR p.PRICE_INVALIDATION_LEVEL <= p.ENTRY_ZONE_HIGH
+                        )
+                       THEN p.ENTRY_ZONE_HIGH * 1.015
+                   ELSE p.PRICE_INVALIDATION_LEVEL
+               END,
+               INVALIDATION_RULE = CASE
+                   WHEN p.DIRECTION = 'LONG'
+                        AND p.ENTRY_ZONE_LOW IS NOT NULL
+                        AND p.PRICE_INVALIDATION_LEVEL IS NOT NULL
+                        AND p.PRICE_INVALIDATION_LEVEL >= p.ENTRY_ZONE_LOW
+                       THEN 'BROKER_STOP_BELOW_ZONE'
+                   WHEN p.DIRECTION = 'SHORT'
+                        AND p.ENTRY_ZONE_HIGH IS NOT NULL
+                        AND p.PRICE_INVALIDATION_LEVEL IS NOT NULL
+                        AND p.PRICE_INVALIDATION_LEVEL <= p.ENTRY_ZONE_HIGH
+                       THEN 'BROKER_STOP_ABOVE_ZONE'
+                   ELSE COALESCE(p.INVALIDATION_RULE, 'AGENTIC_INVALIDATION')
+               END
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+        """,
+        {"run_id": run_id},
+    )
+    return cur.rowcount
+
+
 def _finalize_unpublished_slate(
     cur,
     run_id: str,
@@ -2371,6 +2438,14 @@ def _publish_to_structural(
     )
 
     # Phase 3: post-INSERT geometry validation.
+    # Normalize structural invalidation to broker stop outside entry zone first.
+    normalized = _normalize_published_broker_stops(cur, run_id)
+    if normalized:
+        logger.info(
+            "phase4 normalize_broker_stops run=%s adjusted=%d proposals",
+            run_id, normalized,
+        )
+
     # Marks GEOMETRY_INVALID for proposals with incoherent invalidation geometry.
     # Cross-direction evidence (SETUP_EVENT_ID IS NULL) → SETUP_EVENT_DIRECTION_MISMATCH.
     # Both are hard-blocked at LPA/API; proposals survive for diagnostics.
@@ -2817,6 +2892,12 @@ async def orchestrate_phase4_board(
                             f"runs_today={runs_today} cap={runtime_cfg.max_daily_runs_per_portfolio}"
                         ),
                     )
+            reaped = _reap_zombie_board_runs(cur)
+            if reaped:
+                logger.warning(
+                    "phase4 reaped %d zombie RUNNING board rows before start run=%s",
+                    reaped, run_id,
+                )
             cur.execute(
                 """
                 INSERT INTO MIP.APP.PROPOSAL_BOARD_RUN (

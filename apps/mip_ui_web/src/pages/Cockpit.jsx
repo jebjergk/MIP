@@ -239,6 +239,7 @@ export default function Cockpit() {
       const proposals = boardResult?.proposals_published ?? boardResult?.published_count ?? '?'
       const candidates = boardResult?.candidates_evaluated ?? boardResult?.candidates ?? '?'
       const lpaImported = payload?.lpa_import_total_imported ?? 0
+      const lpaSkipSummary = payload?.lpa_import_skip_summary || null
       const partial = payload?.proposal_board_partial === true
         || String(boardResult?.status || '').toUpperCase() === 'PARTIAL_FAILURE'
       setAgenticResult({
@@ -246,6 +247,7 @@ export default function Cockpit() {
         proposals,
         candidates,
         lpaImported,
+        lpaSkipSummary,
         tradeAutoExecuted: payload?.trade_auto_executed === true,
         runId: payload?.cockpit_run_id,
         boardStatus: boardResult?.status,
@@ -396,6 +398,12 @@ export default function Cockpit() {
                 {' '}Evaluated: {agenticResult.candidates}.
                 {' '}Published: {agenticResult.proposals}.
                 {' '}LPA imported: {agenticResult.lpaImported}.
+                {agenticResult.lpaSkipSummary?.skipped_contract_violations_count > 0
+                  ? ` Contract skips: ${agenticResult.lpaSkipSummary.skipped_contract_violations_count}.`
+                  : ''}
+                {agenticResult.lpaSkipSummary?.skipped_stale_count > 0
+                  ? ` Stale: ${agenticResult.lpaSkipSummary.skipped_stale_count}.`
+                  : ''}
                 {agenticResult.invalidCount != null ? ` Invalid dossiers: ${agenticResult.invalidCount}.` : ''}
                 {agenticResult.runId ? ` [Run ${agenticResult.runId.slice(0, 8)}]` : ''}
               </div>
@@ -405,6 +413,12 @@ export default function Cockpit() {
                 {' '}Candidates evaluated: {agenticResult.candidates}.
                 {' '}Proposals published: {agenticResult.proposals}.
                 {' '}Imported to LPA: {agenticResult.lpaImported}.
+                {agenticResult.lpaSkipSummary?.skipped_contract_violations_count > 0
+                  ? ` Contract skips: ${agenticResult.lpaSkipSummary.skipped_contract_violations_count}.`
+                  : ''}
+                {agenticResult.lpaSkipSummary?.skipped_stale_count > 0
+                  ? ` Stale: ${agenticResult.lpaSkipSummary.skipped_stale_count}.`
+                  : ''}
                 {' '}No trade auto-executed.
                 {agenticResult.runId ? ` [Run ${agenticResult.runId.slice(0, 8)}]` : ''}
               </div>

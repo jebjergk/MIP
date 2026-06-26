@@ -65,6 +65,7 @@ SKIP_REASONS = {
     "INSUFFICIENT_STRUCTURAL_HISTORY",
     "FAR_FROM_ACTIONABLE_LEVELS",
     "NO_RECENT_STATE_CHANGE",
+    "NO_ACTIONABLE_STRUCTURAL_SIGNAL",
 }
 
 # ---------------------------------------------------------------------------
@@ -217,7 +218,7 @@ def _has_recent_setup_event(
         if age is None or age < 0:
             continue
         status = str(ev.get("setup_status") or "").upper()
-        if age <= cutoff and status in {"DETECTED", "ACTIVE", "CONFIRMED"}:
+        if age <= cutoff and status in {"DETECTED", "ACTIVE", "CONFIRMED", "ELIGIBLE", "WAITING"}:
             if best_age is None or age < best_age:
                 best_age = age
                 best = ev
@@ -418,24 +419,28 @@ def evaluate_dossier_eligibility(
         summary["latest_action_status"] = la.get("latest_action_status")
 
     # ---- INCLUDE branches ----
-    # Priority order: highest-importance first so the audit trail is useful.
+    # Structure-driven pre-screen: require an actionable market-structure signal.
+    # State/regime change or proposal memory alone is too weak (was passing
+    # the entire 63-symbol universe). Open-position sim rows never qualify.
+    actionable = (
+        active_live
+        or recent_setup
+        or near_level
+        or abnormal_candle
+        or strong_trust
+    )
     primary = secondary = None
-    if open_pos:
-        primary = "ELIG_OPEN_POSITION"
-    elif active_live:
-        primary = "ELIG_ACTIVE_LIVE_ACTION"
-    elif recent_setup:
-        primary = "ELIG_RECENT_SETUP_EVENT"
-    elif state_change:
-        primary = "ELIG_STATE_OR_REGIME_CHANGE"
-    elif near_level:
-        primary = "ELIG_NEAR_KEY_LEVEL"
-    elif abnormal_candle:
-        primary = "ELIG_ABNORMAL_CANDLE"
-    elif recent_memory:
-        primary = "ELIG_RECENT_PROPOSAL_OR_TRADE_MEMORY"
-    elif strong_trust:
-        primary = "ELIG_STRONG_STRUCTURAL_TRUST"
+    if actionable:
+        if active_live:
+            primary = "ELIG_ACTIVE_LIVE_ACTION"
+        elif recent_setup:
+            primary = "ELIG_RECENT_SETUP_EVENT"
+        elif near_level:
+            primary = "ELIG_NEAR_KEY_LEVEL"
+        elif abnormal_candle:
+            primary = "ELIG_ABNORMAL_CANDLE"
+        elif strong_trust:
+            primary = "ELIG_STRONG_STRUCTURAL_TRUST"
 
     if primary is not None:
         # populate a useful secondary if we have multiple positive signals
@@ -462,7 +467,9 @@ def evaluate_dossier_eligibility(
 
     # ---- SKIP branches ----
     # Pick the most informative skip reason. Order is important.
-    if not has_history:
+    if state_change or recent_memory or open_pos:
+        skip_primary = "NO_ACTIONABLE_STRUCTURAL_SIGNAL"
+    elif not has_history:
         skip_primary = "INSUFFICIENT_STRUCTURAL_HISTORY"
     elif (nearest_pct is None or nearest_pct > NEAR_LEVEL_PCT) and not abnormal_candle:
         skip_primary = "FAR_FROM_ACTIONABLE_LEVELS"

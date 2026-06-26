@@ -64,6 +64,7 @@ from .prompts import (
     specialist_user_message,
 )
 from .review_eligibility import EligibilityDecision, evaluate_dossier_eligibility
+from .ranking import rank_eligible_rows, score_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +94,8 @@ _DEFAULT_MAX_PROPOSALS = 8
 
 # Bounded AI_COMPLETE cost model: exactly 6 LLM calls per candidate (5 + chair).
 _LLM_CALLS_PER_CANDIDATE = 6
-_DEFAULT_MAX_CANDIDATES: Optional[int] = None
-_DEFAULT_MAX_LLM_CALLS_PER_RUN = 36
+_DEFAULT_MAX_CANDIDATES: Optional[int] = 20
+_DEFAULT_MAX_LLM_CALLS_PER_RUN = 132  # 20 candidates × 6 AI_COMPLETE calls + headroom
 _DEFAULT_DAILY_RUNS_PER_PORTFOLIO = 1
 _DEFAULT_SPECIALIST_MODEL = "llama3.1-8b"
 _DEFAULT_CHAIR_MODEL = "llama3.1-8b"
@@ -2047,6 +2048,47 @@ def _warn_limbo_propose_slate(cur, run_id: str) -> None:
         )
 
 
+def _supersede_stale_proposals(
+    cur,
+    run_id: str,
+    portfolio_id: Optional[int],
+) -> int:
+    """Expire older same-symbol PROPOSED rows before publishing this run.
+
+    Prevents C1g duplicate_collision from silently dropping fresh chair PROPOSE_*
+    verdicts when the operator re-runs the board the same day.
+    """
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET STATUS = 'EXPIRED',
+               EXECUTION_POLICY_REASON = COALESCE(
+                   p.EXECUTION_POLICY_REASON,
+                   'SUPERSEDED_BY_NEWER_BOARD_RUN'
+               )
+         WHERE p.STATUS = 'PROPOSED'
+           AND p.BOARD_RUN_ID IS NOT NULL
+           AND p.BOARD_RUN_ID <> %(run_id)s
+           AND COALESCE(p.IS_RESEARCH_ONLY, FALSE) = FALSE
+           AND (%(portfolio_id)s IS NULL
+                OR p.PORTFOLIO_ID = %(portfolio_id)s
+                OR p.PORTFOLIO_ID IS NULL)
+           AND EXISTS (
+               SELECT 1
+                 FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
+                 JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+                   ON s.RUN_ID = fs.RUN_ID AND s.DOSSIER_ID = fs.DOSSIER_ID
+                WHERE fs.RUN_ID = %(run_id)s
+                  AND fs.PUBLICATION_STATUS = 'PENDING'
+                  AND fs.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT')
+                  AND s.SYMBOL = p.SYMBOL
+           )
+        """,
+        {"run_id": run_id, "portfolio_id": portfolio_id},
+    )
+    return int(cur.rowcount or 0)
+
+
 def _publish_to_structural(
     cur, run_id: str, portfolio_id: Optional[int], max_proposals: int,
     short_publication_allowed: bool = False,
@@ -2078,6 +2120,13 @@ def _publish_to_structural(
 
     `ibkr_account_mode` is recorded in audit JSON for transparency.
     """
+    superseded = _supersede_stale_proposals(cur, run_id, portfolio_id)
+    if superseded:
+        logger.info(
+            "phase4 supersede_stale_proposals run=%s expired=%d older PROPOSED rows",
+            run_id, superseded,
+        )
+
     cur.execute(
         """
         INSERT INTO MIP.APP.STRUCTURAL_TRADE_PROPOSALS (
@@ -2128,9 +2177,30 @@ def _publish_to_structural(
             s.PORTFOLIO_ID, s.SYMBOL,
             v.FINAL_DIRECTION,
             LEFT(v.PTC:thesis_label::STRING, 80),
-            TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
-            TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING),
-            TRY_TO_DOUBLE(v.PTC:invalidation_level::STRING),
+            COALESCE(
+                TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
+                TRY_TO_DOUBLE(ev.ENTRY_ZONE_LOW::STRING),
+                IFF(v.FINAL_DIRECTION = 'LONG',
+                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_price::STRING),
+                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_price::STRING)
+                )
+            ),
+            COALESCE(
+                TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING),
+                TRY_TO_DOUBLE(ev.ENTRY_ZONE_HIGH::STRING),
+                IFF(v.FINAL_DIRECTION = 'LONG',
+                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_price::STRING),
+                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_price::STRING)
+                )
+            ),
+            COALESCE(
+                TRY_TO_DOUBLE(v.PTC:invalidation_level::STRING),
+                TRY_TO_DOUBLE(ev.PRICE_INVALIDATION_LEVEL::STRING),
+                IFF(v.FINAL_DIRECTION = 'LONG',
+                    TRY_TO_DOUBLE(ev.ENTRY_ZONE_LOW::STRING) * 0.985,
+                    TRY_TO_DOUBLE(ev.ENTRY_ZONE_HIGH::STRING) * 1.015
+                )
+            ),
             LEFT(COALESCE(v.PTC:invalidation_rule::STRING, 'AGENTIC_INVALIDATION'), 30),
             -- TRAIL_STYLE: canonical 'PCT' for any TRAIL_* profile, NULL when
             -- chair explicitly chose FIXED_STANDARD.
@@ -2449,21 +2519,82 @@ def _publish_to_structural(
 # ---------------------------------------------------------------------------
 
 
-def _crude_prerank_key(row: Tuple[int, str, str, Dict[str, Any]]) -> Tuple[int, int, str]:
-    """TEMP_COST_CAP_ORDER: crude stable ordering used until ranking.py (Stage 3).
+_CANDIDATE_ROTATION_LOOKBACK_DAYS = 3
+_FRESH_SETUP_STATUSES = frozenset({"ELIGIBLE", "DETECTED", "ACTIVE", "CONFIRMED", "WAITING"})
 
-    Sorts eligible rows before applying max_candidates cap so the selection is
-    deterministic and reproducible.  Priority (descending):
-      1. Number of active setup events (more evidence = more likely to produce a proposal)
-      2. Dossier ID descending (larger = more recently inserted)
-      3. Symbol alphabetically (tie-break)
 
-    Not a quality gate.  Replaced by score_candidate() in Stage 3.
+def _parse_dossier_date(raw: Any) -> Optional[_date]:
+    if raw is None:
+        return None
+    if isinstance(raw, _date):
+        return raw
+    try:
+        return _date.fromisoformat(str(raw)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _count_fresh_eligible_setups(payload: Dict[str, Any], as_of: _date) -> int:
+    """Count recent setup events that qualify as fresh panel candidates."""
+    events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return 0
+    count = 0
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        status = str(ev.get("setup_status") or "").upper()
+        if status not in _FRESH_SETUP_STATUSES:
+            continue
+        sdate = _parse_dossier_date(ev.get("setup_date"))
+        if sdate is None:
+            continue
+        age = (as_of - sdate).days
+        if 0 <= age <= 10:
+            count += 1
+    return count
+
+
+def _load_recently_reviewed_symbols(cur, lookback_days: int = _CANDIDATE_ROTATION_LOOKBACK_DAYS) -> set[str]:
+    cur.execute(
+        """
+        SELECT DISTINCT UPPER(v.SYMBOL)
+          FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v
+          JOIN MIP.APP.PROPOSAL_BOARD_RUN r ON r.RUN_ID = v.RUN_ID
+         WHERE r.STARTED_AT >= DATEADD('day', -%(days)s, CURRENT_TIMESTAMP())
+        """,
+        {"days": int(lookback_days)},
+    )
+    return {str(r[0]).upper() for r in (cur.fetchall() or []) if r and r[0]}
+
+
+def _candidate_prerank_key(
+    row: Tuple[int, str, str, Dict[str, Any]],
+    recently_reviewed: set[str],
+    as_of: _date,
+) -> Tuple[int, int, int, int, str]:
+    """Stage 2B rotation + fresh-setup boost before max_candidates cap.
+
+    Priority (ascending sort key — lower wins):
+      1. More fresh ELIGIBLE/DETECTED setups in last 10d (negated)
+      2. Not reviewed in last N days (0 before 1)
+      3. More 30d setup-event evidence (negated)
+      4. Higher dossier_id (negated)
+      5. Symbol alphabetically
     """
     did, sym, _mkt, payload = row
     setup_events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
     n_events = len(setup_events) if isinstance(setup_events, list) else 0
-    return (-n_events, -did, sym)
+    fresh = _count_fresh_eligible_setups(payload if isinstance(payload, dict) else {}, as_of)
+    reviewed_penalty = 1 if sym.upper() in recently_reviewed else 0
+    return (-fresh, reviewed_penalty, -n_events, -did, sym)
+
+
+def _crude_prerank_key(row: Tuple[int, str, str, Dict[str, Any]]) -> Tuple[int, int, int, int, str]:
+    """Backward-compatible alias — rotation disabled (empty recently_reviewed set)."""
+    did, sym, _mkt, payload = row
+    as_of = _date.today()
+    return _candidate_prerank_key(row, set(), as_of)
 
 
 @dataclass
@@ -2860,27 +2991,51 @@ async def orchestrate_phase4_board(
         skip_counts, operator_override,
     )
 
-    # Stage 0.6 — TEMP_COST_CAP_ORDER: crude stable pre-agent sort + candidate cap.
-    # Applied before asyncio.gather so only the top-N candidates reach Cortex agents.
-    # Sorting is deterministic (not raw arrival order) regardless of whether a cap
-    # is active. This is Stage 2 of the cost-control plan; replaced by
-    # score_candidate() in Stage 3 (ranking.py).
+    # Stage 0.6 — SCORE_RANKED pre-screen + max_candidates cap.
+    # Deterministic appeal scoring (ranking.py) then top-N to AI_COMPLETE panel.
     genuine_eligible_count = len(eligible_rows)
     cost_capped_count = 0
-    candidate_mode = "UNCAPPED"
 
-    # Always sort by crude stable key for deterministic order.
-    eligible_rows = sorted(eligible_rows, key=_crude_prerank_key)
+    rotation_cur = conn.cursor()
+    try:
+        recently_reviewed = _load_recently_reviewed_symbols(rotation_cur)
+    finally:
+        try:
+            rotation_cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    scored_rows = rank_eligible_rows(eligible_rows, as_of, recently_reviewed)
+    candidate_mode = "SCORE_RANKED" if scored_rows else "UNCAPPED"
+    if scored_rows:
+        top_preview = [
+            f"{sym}({breakdown.get('prescreen_score', pts):.1f})"
+            for _did, sym, _mkt, _pl, pts, breakdown in scored_rows[:10]
+        ]
+        logger.info(
+            "phase4 prescreen_score run=%s eligible=%d top10=%s",
+            run_id, len(scored_rows), top_preview,
+        )
+
+    eligible_rows = [
+        (did, sym, mkt, payload) for did, sym, mkt, payload, _pts, _bd in scored_rows
+    ]
+
+    if recently_reviewed:
+        logger.info(
+            "phase4 candidate_rotation run=%s recently_reviewed=%d symbols",
+            run_id, len(recently_reviewed),
+        )
 
     if max_candidates is not None and len(eligible_rows) > max_candidates:
         kept = eligible_rows[:max_candidates]
         skipped_cap = eligible_rows[max_candidates:]
         cost_capped_count = len(skipped_cap)
-        candidate_mode = "TEMP_COST_CAP_ORDER"
+        candidate_mode = "SCORE_RANKED"
 
         logger.info(
-            "phase4 TEMP_COST_CAP_ORDER run=%s max_candidates=%d "
-            "kept=%s skipped=%d (order=n_setup_events,dossier_id,symbol)",
+            "phase4 SCORE_RANKED cap run=%s max_candidates=%d "
+            "kept=%s skipped=%d",
             run_id, max_candidates,
             [sym for _, sym, _, _ in kept],
             cost_capped_count,

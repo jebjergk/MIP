@@ -17742,6 +17742,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
         skipped_live_position = 0
         skipped_duplicate_symbol = 0
         skipped_contract_violations = 0
+        skipped_contract_violation_details: list[dict[str, Any]] = []
         imported_action_ids: list[str] = []
         seen_symbols: set[str] = set()
         live_position_cache: dict[str, bool] = {}
@@ -17781,19 +17782,37 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     )
                     if _trail_viol:
                         skipped_contract_violations += 1
+                        skipped_contract_violation_details.append({
+                            "proposal_id": proposal_id,
+                            "symbol": symbol,
+                            "reason": "TRAIL_PARAMS_INVALID",
+                            "violations": _trail_viol,
+                        })
                         continue
                 else:
                     # FIXED_BRACKET: clear trailing fields so execution path is
                     # unambiguous. Risk policy management TRAIL_PARAMS untouched.
                     p_norm["TRAIL_STYLE"] = None
                     p_norm["TRAIL_PARAMS"] = None
-            except ValueError:
+            except ValueError as exc:
                 skipped_contract_violations += 1
+                skipped_contract_violation_details.append({
+                    "proposal_id": proposal_id,
+                    "symbol": symbol,
+                    "reason": "EXIT_POLICY_RESOLVE_FAILED",
+                    "detail": str(exc),
+                })
                 continue
 
             _viol = structural_proposal_minimum_contract_violations(p_norm)
             if _viol:
                 skipped_contract_violations += 1
+                skipped_contract_violation_details.append({
+                    "proposal_id": proposal_id,
+                    "symbol": symbol,
+                    "reason": "MINIMUM_CONTRACT",
+                    "violations": _viol,
+                })
                 continue
 
             # Dedupe by symbol
@@ -18017,6 +18036,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
             "skipped_live_position_count": skipped_live_position,
             "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
             "skipped_contract_violations_count": skipped_contract_violations,
+            "skipped_contract_violation_details": skipped_contract_violation_details,
             "imported_action_ids": imported_action_ids,
         }
     finally:

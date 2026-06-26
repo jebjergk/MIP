@@ -203,6 +203,31 @@ def _extract_first_json(stream: Any) -> Any:
         return None
 
 
+def _aggregate_lpa_import_skip_summary(per_portfolio_results: dict[str, Any]) -> dict[str, Any]:
+    """Roll up import skip counters across portfolios for Cockpit display."""
+    totals = {
+        "candidate_count": 0,
+        "imported_count": 0,
+        "skipped_existing_count": 0,
+        "skipped_long_only_count": 0,
+        "skipped_stale_count": 0,
+        "skipped_live_position_count": 0,
+        "skipped_duplicate_symbol_count": 0,
+        "skipped_contract_violations_count": 0,
+    }
+    contract_details: list[dict[str, Any]] = []
+    for _pid, res in (per_portfolio_results or {}).items():
+        if not isinstance(res, dict) or res.get("error"):
+            continue
+        for key in totals:
+            totals[key] += int(res.get(key) or 0)
+        for detail in res.get("skipped_contract_violation_details") or []:
+            if isinstance(detail, dict):
+                contract_details.append(detail)
+    totals["contract_violation_details"] = contract_details[:10]
+    return totals
+
+
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -257,15 +282,13 @@ def run_ib_manual_daily_job(
     proposal_board_max_proposals: int = Query(8, ge=1, le=20),
     proposal_board_max_rounds: int = Query(1, ge=1, le=3),
     proposal_board_max_candidates: int = Query(
-        5,
+        20,
         ge=1,
         le=50,
         description=(
-            "COST CAP. Max STOCK candidates sent to the Cortex agent panel "
-            "(passed as --max-candidates to run_board.py). This is the primary "
-            "Phase 4 cost control: agent sessions ~= max_candidates * 7. Keep "
-            "small (e.g. 5) to bound Cortex spend. The board also enforces a "
-            "hard daily session budget and fails closed if exceeded."
+            "Pre-screen cap: top-N STOCK candidates by structural appeal score "
+            "sent to the AI_COMPLETE panel (~6 LLM calls each). Default 20 "
+            "(~1.1 Snowflake credits/run at current rates)."
         ),
     ),
     proposal_board_inter_concurrency: int = Query(
@@ -678,6 +701,9 @@ def run_ib_manual_daily_job(
                 response["lpa_import_portfolios"] = active_portfolios
                 response["lpa_import_total_imported"] = total_imported
                 response["lpa_import_result"] = per_portfolio_results
+                response["lpa_import_skip_summary"] = _aggregate_lpa_import_skip_summary(
+                    per_portfolio_results
+                )
                 log.info(
                     "LPA import after capped board: portfolios=%s total_imported=%s",
                     active_portfolios, total_imported,
@@ -749,12 +775,12 @@ def run_proposal_board(
     max_proposals: int = Query(8, ge=1, le=20),
     max_rounds: int = Query(1, ge=1, le=3),
     max_candidates: int = Query(
-        5,
+        20,
         ge=1,
         le=50,
         description=(
-            "COST CAP. Max STOCK candidates sent to the Cortex agent panel. "
-            "Agent sessions ≈ max_candidates × 7. Keep small (≤5) to bound Cortex spend."
+            "Pre-screen cap: top-N candidates by structural appeal score "
+            "sent to AI_COMPLETE (~6 calls each). Default 20."
         ),
     ),
     inter_concurrency: int = Query(2, ge=1, le=8, description="Parallel dossiers sent to agents."),
@@ -1015,6 +1041,9 @@ def run_proposal_board(
             response["lpa_import_portfolios"] = active_portfolios
             response["lpa_import_total_imported"] = total_imported
             response["lpa_import_result"] = per_portfolio_results
+            response["lpa_import_skip_summary"] = _aggregate_lpa_import_skip_summary(
+                per_portfolio_results
+            )
             log.info(
                 "LPA import after capped board: portfolios=%s total_imported=%s",
                 active_portfolios,

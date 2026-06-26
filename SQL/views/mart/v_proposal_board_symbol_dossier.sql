@@ -720,6 +720,9 @@ live_action_context AS (
     WHERE LIVE_INTENT_KIND = 'STRUCTURAL'
     GROUP BY SYMBOL
 ),
+-- Live broker truth only. Do NOT use PORTFOLIO_POSITIONS here: that table
+-- carries simulation/horizon book rows that are invisible in LPA and must
+-- not drive proposal-board eligibility.
 open_position_context AS (
     SELECT
         SYMBOL,
@@ -728,7 +731,8 @@ open_position_context AS (
             'total_quantity', SUM(QUANTITY),
             'portfolio_ids', ARRAY_UNIQUE_AGG(PORTFOLIO_ID)
         ) AS OPEN_POSITION_CONTEXT_JSON
-    FROM MIP.APP.PORTFOLIO_POSITIONS
+    FROM MIP.MART.V_LIVE_OPEN_POSITIONS
+    WHERE COALESCE(QUANTITY, 0) <> 0
     GROUP BY SYMBOL
 )
 SELECT

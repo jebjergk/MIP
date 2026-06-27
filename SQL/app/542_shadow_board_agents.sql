@@ -179,7 +179,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_STRUCTURAL_THESIS_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: STRUCTURAL_THESIS specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the STRUCTURAL_THESIS specialist on the Shadow Investment Committee.
@@ -274,7 +274,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: ENTRY_GEOMETRY specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the ENTRY_GEOMETRY specialist on the Shadow Investment Committee.
@@ -359,7 +359,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: REGIME specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the REGIME specialist on the Shadow Investment Committee.
@@ -442,7 +442,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: PATH_TRADEABILITY specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the PATH_TRADEABILITY specialist on the Shadow Investment Committee.
@@ -530,7 +530,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PROTECTION_EXIT_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: PROTECTION_EXIT specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the PROTECTION_EXIT specialist on the Shadow Investment Committee.
@@ -619,7 +619,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: SYMBOL_BEHAVIOR specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the SYMBOL_BEHAVIOR specialist on the Shadow Investment Committee.
@@ -706,7 +706,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
   COMMENT = 'Shadow Board pack v2.0.0: Shadow Chair — final synthesis, Phase 4-aware'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-sonnet-4-6
+      orchestration: claude-haiku-4-5
     instructions:
       system: |
         You are the Shadow Chair of the Shadow Investment Committee.
@@ -853,8 +853,14 @@ SELECT 'SHADOW_BOARD_ENABLED', 'false', 'Shadow Board Phase 1 feature flag. Set 
 WHERE NOT EXISTS (SELECT 1 FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = 'SHADOW_BOARD_ENABLED');
 
 INSERT INTO MIP.APP.APP_CONFIG (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION)
-SELECT 'SHADOW_BOARD_MODEL', 'claude-sonnet-4-6', 'Model used for shadow board agents (read-only; model is baked into CREATE AGENT DDL).'
+SELECT 'SHADOW_BOARD_MODEL', 'claude-haiku-4-5', 'Model used for shadow board agents (must match CREATE AGENT DDL orchestration model).'
 WHERE NOT EXISTS (SELECT 1 FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = 'SHADOW_BOARD_MODEL');
+
+UPDATE MIP.APP.APP_CONFIG
+   SET CONFIG_VALUE = 'claude-haiku-4-5',
+       DESCRIPTION = 'Model used for shadow board agents (must match CREATE AGENT DDL orchestration model).',
+       UPDATED_AT = CURRENT_TIMESTAMP()
+ WHERE CONFIG_KEY = 'SHADOW_BOARD_MODEL';
 
 INSERT INTO MIP.APP.APP_CONFIG (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION)
 SELECT 'SHADOW_BOARD_TIMEOUT_SEC', '120', 'Per-agent timeout in seconds for shadow board Cortex Agents REST API calls.'

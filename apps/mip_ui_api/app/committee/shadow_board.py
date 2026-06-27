@@ -67,8 +67,8 @@ _SPECIALIST_AGENTS = {
 }
 _CHAIR_AGENT = "SHADOW_CHAIR_AGENT"
 
-_OBJECTLESS_MODEL = "claude-sonnet-4-6"
-_AGENT_MODEL = "claude-sonnet-4-6"  # Baked into all SHADOW_*_AGENT specs; mirrored here so SHADOW_BOARD_SESSION.AGENT_MODEL is recorded explicitly instead of relying on the (stale) column default.
+_OBJECTLESS_MODEL = "claude-haiku-4-5"
+_AGENT_MODEL = "claude-haiku-4-5"  # Baked into all SHADOW_*_AGENT specs; mirrored here so SHADOW_BOARD_SESSION.AGENT_MODEL is recorded explicitly instead of relying on the (stale) column default.
 _CACHE_TTL_HOURS = 24
 
 

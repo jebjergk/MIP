@@ -629,16 +629,49 @@ function VerdictRibbon({ stance, confidence, sessionId, runMs }) {
   return (
     <div className={`sbp-verdict-ribbon ${polarity}`}>
       <div className="sbp-verdict-ribbon-left">
-        <span className="sbp-verdict-label">Shadow Verdict</span>
+        <span className="sbp-verdict-label">Committee verdict</span>
         <ShadowStanceBadge stance={stance} size="lg" />
       </div>
       <div className="sbp-verdict-ribbon-right">
         <ConfidenceDonut value={confidence} color={CHAIR_PERSONA.accent} size={42} strokeWidth={5} />
         <div className="sbp-verdict-meta">
           {runMs != null && <span>{(runMs / 1000).toFixed(1)}s</span>}
-          {sessionId && <span className="sbp-mono">· {String(sessionId).slice(0, 8)}</span>}
         </div>
       </div>
+    </div>
+  )
+}
+
+function OutcomeSummary({ chair, shadowStance, shadowConfidence }) {
+  const stance = String(shadowStance || chair?.shadow_stance || '').toUpperCase()
+  const conf = shadowConfidence != null ? Number(shadowConfidence) : null
+  const supports = (Array.isArray(chair?.top_supports) ? chair.top_supports : []).slice(0, 3)
+  const tensions = (Array.isArray(chair?.top_tensions) ? chair.top_tensions : []).slice(0, 3)
+  const resolution = chair?.conflict_resolution || chair?.plurality_basis || null
+  if (!stance) return null
+  return (
+    <div className={`sbp-outcome-summary ${stancePolarityClass(stance)}`}>
+      <div className="sbp-outcome-summary-head">
+        <ShadowStanceBadge stance={stance} size="lg" />
+        {conf != null ? (
+          <span className="sbp-outcome-conf">Confidence {Math.round(conf * 100)}%</span>
+        ) : null}
+      </div>
+      {resolution ? <p className="sbp-outcome-resolution">{resolution}</p> : null}
+      {(supports.length > 0 || tensions.length > 0) && (
+        <div className="sbp-outcome-columns">
+          {supports.length > 0 ? (
+            <ul className="sbp-outcome-list">
+              {supports.map((s, i) => <li key={`s-${i}`}>{s}</li>)}
+            </ul>
+          ) : null}
+          {tensions.length > 0 ? (
+            <ul className="sbp-outcome-list sbp-outcome-list--tension">
+              {tensions.map((t, i) => <li key={`t-${i}`}>{t}</li>)}
+            </ul>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }
@@ -797,6 +830,16 @@ export default function ShadowBoardPanel({
   const effectiveSnapshotId = shadowPayload?.snapshot_id ?? runningProgress?.snapshot_id ?? snapshotId
   const startedAtMs = runningProgress?.started_at_ms || null
   const liveElapsed = useElapsedSeconds(isRunning, startedAtMs)
+  const [showLiveDeliberation, setShowLiveDeliberation] = useState(false)
+  const [showFullTranscript, setShowFullTranscript] = useState(false)
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false)
+
+  useEffect(() => {
+    if (isRunning) {
+      setShowLiveDeliberation(false)
+      setShowFullTranscript(false)
+    }
+  }, [isRunning, effectiveSessionId])
 
   // Build a chronological event timeline so conflicts land *between* the
   // bubbles they relate to and challenge/revision land where they fit.
@@ -834,12 +877,17 @@ export default function ShadowBoardPanel({
     return events
   }, [positions, conflicts, challenge, revisions])
 
+  const showDeliberationFeed = isRunning
+    ? (showLiveDeliberation || stageReached >= 1)
+    : Boolean(showFullTranscript)
+  const showStageSection = isRunning || (isComplete && showFullTranscript)
+
   return (
     <aside className="sbp-root">
       <div className="sbp-header">
         <div className="sbp-header-title">
-          <span className="sbp-label-chip">SHADOW BOARDROOM</span>
-          <span className="sbp-header-subtitle">Six specialists · One chair · Zero authority</span>
+          <span className="sbp-label-chip">AGENTIC COMMITTEE</span>
+          <span className="sbp-header-subtitle">Primary review for this trade</span>
         </div>
         {(shadowPayload || runningProgress) && (
           <div className="sbp-header-meta">
@@ -875,13 +923,41 @@ export default function ShadowBoardPanel({
         />
       )}
 
-      {/* Two-column body: stage rail (left) + deliberation feed (right).
-          The feed is a self-scrolling chat surface that auto-pins to the
-          newest message as the deliberation unfolds — the host page does
-          NOT grow as bubbles arrive. */}
+      {isComplete && chair && !showFullTranscript ? (
+        <>
+          <OutcomeSummary
+            chair={chair}
+            shadowStance={shadowPayload?.shadow_stance}
+            shadowConfidence={shadowPayload?.shadow_confidence}
+          />
+          <button
+            type="button"
+            className="sbp-expand-btn"
+            onClick={() => setShowFullTranscript(true)}
+          >
+            Show full deliberation transcript
+          </button>
+        </>
+      ) : null}
+
+      {showStageSection ? (
       <div className="sbp-stage">
         <StageRail stageReached={stageReached} isRunning={isRunning} isComplete={isComplete} />
 
+        {isRunning && !showDeliberationFeed ? (
+          <div className="sbp-running-summary">
+            <TypingPlaceholder stage={stageKey} isRunning={isRunning} />
+            <button
+              type="button"
+              className="sbp-expand-btn sbp-expand-btn--inline"
+              onClick={() => setShowLiveDeliberation(true)}
+            >
+              Watch live deliberation
+            </button>
+          </div>
+        ) : null}
+
+        {showDeliberationFeed ? (
         <ChatFeed
           isRunning={isRunning}
           chatSignals={[
@@ -971,16 +1047,49 @@ export default function ShadowBoardPanel({
             </div>
           )}
         </ChatFeed>
+        ) : null}
       </div>
+      ) : isRunning ? (
+        <div className="sbp-running-summary sbp-running-summary--solo">
+          <StageRail stageReached={stageReached} isRunning={isRunning} isComplete={isComplete} />
+          <TypingPlaceholder stage={stageKey} isRunning={isRunning} />
+          <button
+            type="button"
+            className="sbp-expand-btn sbp-expand-btn--inline"
+            onClick={() => setShowLiveDeliberation(true)}
+          >
+            Watch live deliberation
+          </button>
+        </div>
+      ) : null}
 
-      <SnapshotBindFooter
-        evidenceHash={effectiveHash}
-        snapshotId={effectiveSnapshotId}
-        sessionId={effectiveSessionId}
-      />
+      {isComplete && showFullTranscript ? (
+        <button
+          type="button"
+          className="sbp-expand-btn sbp-expand-btn--collapse"
+          onClick={() => setShowFullTranscript(false)}
+        >
+          Hide deliberation transcript
+        </button>
+      ) : null}
+
+      {showTechnicalDetails ? (
+        <SnapshotBindFooter
+          evidenceHash={effectiveHash}
+          snapshotId={effectiveSnapshotId}
+          sessionId={effectiveSessionId}
+        />
+      ) : (
+        <button
+          type="button"
+          className="sbp-expand-btn sbp-expand-btn--technical"
+          onClick={() => setShowTechnicalDetails(true)}
+        >
+          Technical details
+        </button>
+      )}
       <footer className="sbp-disclaimer">
-        Agentic Committee — six independent specialists + one chair, frozen snapshot. Submit eligibility requires
-        operator commit. Model: claude-sonnet-4-6 via Snowflake Cortex Agents.
+        Agentic Committee — six specialists and one chair on a frozen snapshot.
       </footer>
     </aside>
   )

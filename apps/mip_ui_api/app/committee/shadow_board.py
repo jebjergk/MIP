@@ -1936,27 +1936,102 @@ async def orchestrate_shadow_board(
 # Fetch cached session for GET endpoint (sync helper)
 # ---------------------------------------------------------------------------
 
-def fetch_shadow_session(hearing_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Retrieve the most recent shadow board session for a hearing (for GET endpoint).
-    Returns None if no session exists.
-    """
+def _fetch_hearing_evidence_pack_hash_sync(hearing_id: str) -> Optional[str]:
+    """Return COMMITTEE_HEARING.EVIDENCE_PACK_HASH for session binding."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT * FROM MIP.APP.SHADOW_BOARD_SESSION
-            WHERE HEARING_ID = %s
-            ORDER BY CREATED_AT DESC
-            LIMIT 1
+            SELECT EVIDENCE_PACK_HASH
+              FROM MIP.APP.COMMITTEE_HEARING
+             WHERE HEARING_ID = %s
             """,
             (hearing_id,),
         )
-        sessions = fetch_all(cur)
-        if not sessions:
+        rows = fetch_all(cur)
+        if not rows:
             return None
-        session = sessions[0]
+        raw = rows[0].get("EVIDENCE_PACK_HASH")
+        return str(raw) if raw else None
+    finally:
+        conn.close()
+
+
+def _select_shadow_session_row_sync(
+    cur,
+    hearing_id: str,
+    evidence_pack_hash: Optional[str] = None,
+) -> tuple[Optional[Dict[str, Any]], bool]:
+    """
+    Pick the shadow session row operators should see for a hearing.
+
+    Priority:
+      1. RUNNING session (any hash — a fresh run is in flight)
+      2. Session whose EVIDENCE_PACK_HASH matches the hearing's current hash
+         (or the explicit `evidence_pack_hash` query param when supplied)
+      3. Most recent session (marked stale_session=True when hash mismatches)
+
+    Returns (row, stale_session).
+    """
+    cur.execute(
+        """
+        SELECT *
+          FROM MIP.APP.SHADOW_BOARD_SESSION
+         WHERE HEARING_ID = %s
+         ORDER BY CREATED_AT DESC
+        """,
+        (hearing_id,),
+    )
+    rows = fetch_all(cur)
+    if not rows:
+        return None, False
+
+    running = next(
+        (r for r in rows if str(r.get("STATUS") or "").upper() == "RUNNING"),
+        None,
+    )
+    if running:
+        return running, False
+
+    target_hash = evidence_pack_hash
+    if not target_hash:
+        cur.execute(
+            """
+            SELECT EVIDENCE_PACK_HASH
+              FROM MIP.APP.COMMITTEE_HEARING
+             WHERE HEARING_ID = %s
+            """,
+            (hearing_id,),
+        )
+        hearing_rows = fetch_all(cur)
+        if hearing_rows and hearing_rows[0].get("EVIDENCE_PACK_HASH"):
+            target_hash = str(hearing_rows[0]["EVIDENCE_PACK_HASH"])
+    if target_hash:
+        for row in rows:
+            if str(row.get("EVIDENCE_PACK_HASH") or "") == target_hash:
+                return row, False
+
+    return rows[0], True
+
+
+def fetch_shadow_session(
+    hearing_id: str,
+    evidence_pack_hash: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve the shadow board session operators should see for a hearing.
+    Prefers RUNNING, then hash-matched, then most-recent (stale_session flag).
+    Returns None if no session exists.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        session, stale_session = _select_shadow_session_row_sync(
+            cur, hearing_id, evidence_pack_hash=evidence_pack_hash,
+        )
+        if not session:
+            return None
         sid = session["SESSION_ID"]
 
         cur.execute(
@@ -2011,6 +2086,7 @@ def fetch_shadow_session(hearing_id: str) -> Optional[Dict[str, Any]]:
             "status": session.get("STATUS"),
             "degraded": session.get("DEGRADED"),
             "degraded_reason": session.get("DEGRADED_REASON"),
+            "stale_session": bool(stale_session),
             "run_ms": session.get("RUN_MS"),
             "created_at": str(session.get("CREATED_AT") or ""),
             "positions": [
@@ -2079,7 +2155,10 @@ def fetch_shadow_session(hearing_id: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 
-def fetch_shadow_progress(hearing_id: str) -> Optional[Dict[str, Any]]:
+def fetch_shadow_progress(
+    hearing_id: str,
+    evidence_pack_hash: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Lightweight status-only fetch for the LPA polling loop. Avoids the full
     payload assembly (specialist rows, conflicts, chair) while a session is
@@ -2088,21 +2167,11 @@ def fetch_shadow_progress(hearing_id: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT SESSION_ID, STATUS, STAGE_REACHED, DEGRADED,
-                   EVIDENCE_PACK_HASH, SNAPSHOT_ID, CREATED_AT
-              FROM MIP.APP.SHADOW_BOARD_SESSION
-             WHERE HEARING_ID = %s
-             ORDER BY CREATED_AT DESC
-             LIMIT 1
-            """,
-            (hearing_id,),
+        row, stale_session = _select_shadow_session_row_sync(
+            cur, hearing_id, evidence_pack_hash=evidence_pack_hash,
         )
-        rows = fetch_all(cur)
-        if not rows:
+        if not row:
             return None
-        row = rows[0]
         return {
             "ok": True,
             "session_id": row.get("SESSION_ID"),
@@ -2112,6 +2181,7 @@ def fetch_shadow_progress(hearing_id: str) -> Optional[Dict[str, Any]]:
             "evidence_pack_hash": row.get("EVIDENCE_PACK_HASH"),
             "snapshot_id": row.get("SNAPSHOT_ID"),
             "created_at": str(row.get("CREATED_AT") or ""),
+            "stale_session": bool(stale_session),
         }
     finally:
         conn.close()

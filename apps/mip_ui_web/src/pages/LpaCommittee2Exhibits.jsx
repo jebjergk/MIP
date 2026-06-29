@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import BoardExplanationPanel from '../components/board/BoardExplanationPanel'
 import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
@@ -306,7 +305,16 @@ function Reveal({ show, children, className = '' }) {
 /**
  * Inline proof exhibits + WIP terminal for Committee 2.0 orchestrate.
  */
-export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg, loading, onShadowSessionLoaded }) {
+export default function LpaCommittee2Exhibits({
+  inline,
+  hearingHref,
+  progressMsg,
+  loading,
+  onShadowSessionLoaded,
+  shadowReused = false,
+  showEvidenceColumn = false,
+  onForceFreshReview,
+}) {
   const chartGradId = useMemo(() => `c2fx_${Math.random().toString(36).slice(2, 11)}`, [])
   const [revealStep, setRevealStep] = useState(0)
   // Comparative-priority context for this proposal vs the rest of the
@@ -371,6 +379,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const [shadowError, setShadowError] = useState(null)
   const [shadowLoading, setShadowLoading] = useState(false)
   const fullFetchedFor = useRef(null)
+  const pollGenerationRef = useRef(0)
 
   useEffect(() => {
     if (!hearingId) {
@@ -382,27 +391,42 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       return undefined
     }
 
+    const generation = pollGenerationRef.current + 1
+    pollGenerationRef.current = generation
+
     let cancelled = false
     let timer = null
+    setShadowPayload(null)
     setShadowError(null)
     setShadowLoading(true)
+    fullFetchedFor.current = null
 
     // Seed progress with whatever orchestrate told us up-front.
     if (inlineShadowSession || inlineShadowStatus) {
-      setShadowProgress((prev) => prev || {
+      setShadowProgress({
         session_id: inlineShadowSession,
         status: inlineShadowStatus || 'RUNNING',
         stage_reached: 0,
         evidence_pack_hash: inlineEvidenceHash,
       })
+    } else {
+      setShadowProgress({
+        status: 'RUNNING',
+        stage_reached: 0,
+        evidence_pack_hash: inlineEvidenceHash,
+      })
     }
+
+    const hashQuery = inlineEvidenceHash
+      ? `&evidence_pack_hash=${encodeURIComponent(inlineEvidenceHash)}`
+      : ''
 
     const fetchProgress = async () => {
       try {
         const r = await fetch(
-          `${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board?include_progress=1`,
+          `${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board?include_progress=1${hashQuery}`,
         )
-        if (cancelled) return
+        if (cancelled || pollGenerationRef.current !== generation) return
         if (r.status === 404) {
           return
         }
@@ -412,48 +436,48 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         }
         if (!r.ok) return
         const j = await r.json()
-        if (cancelled || !j) return
+        if (cancelled || pollGenerationRef.current !== generation || !j) return
         setShadowProgress(j)
 
-        // Always fetch the full payload too, even while RUNNING, so the
-        // boardroom UI can show specialists / conflicts / challenge bubbles
-        // landing live as the orchestrator writes them. (Backend now
-        // persists each stage incrementally, so this snapshot grows row by
-        // row over the ~2 minute run.)
         const status = String(j.status || '').toUpperCase()
         const stageReached = Number(j.stage_reached ?? 0)
         const isTerminal = status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED'
+        const isRunningNow = status === 'RUNNING'
         const shouldFetchFull = isTerminal || stageReached >= 1
         if (shouldFetchFull) {
           try {
-            const full = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
+            const full = await fetch(
+              `${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board${inlineEvidenceHash ? `?evidence_pack_hash=${encodeURIComponent(inlineEvidenceHash)}` : ''}`,
+            )
             if (full.ok) {
               const fj = await full.json()
-              if (!cancelled) setShadowPayload(fj)
+              if (cancelled || pollGenerationRef.current !== generation) return
+              if (isRunningNow && fj?.stale_session) {
+                return
+              }
+              setShadowPayload(fj)
               if (isTerminal) fullFetchedFor.current = j.session_id
             }
           } catch (_e) { /* ignore */ }
         }
       } catch (_e) {
       } finally {
-        if (!cancelled) setShadowLoading(false)
+        if (!cancelled && pollGenerationRef.current === generation) setShadowLoading(false)
       }
     }
 
     fetchProgress()
 
     const tick = () => {
-      const status = String(shadowProgress?.status || inlineShadowStatus || 'RUNNING').toUpperCase()
+      const status = String(
+        shadowProgress?.status || inlineShadowStatus || 'RUNNING',
+      ).toUpperCase()
       if (status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED') {
-        // One last full fetch to catch any final-stage writes, then stop.
         fetchProgress()
         return
       }
       fetchProgress().finally(() => {
-        if (!cancelled) {
-          // ~1.2s feels like the deliberation is breathing. Anything slower
-          // and bubbles appear in clumps; anything faster and we hammer
-          // Snowflake without visible benefit.
+        if (!cancelled && pollGenerationRef.current === generation) {
           timer = setTimeout(tick, 1200)
         }
       })
@@ -464,10 +488,8 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-    // We intentionally only re-run when hearingId or the inline session changes
-    // (referencing shadowProgress in deps would create a tight re-render loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hearingId, inlineShadowSession])
+  }, [hearingId, inlineShadowSession, inlineEvidenceHash])
 
   // Stage 2: when the exhibits panel has fetched the (possibly final) shadow
   // payload, normalize it and push it back to the LPA row so the Shadow
@@ -502,6 +524,12 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       setRevealStep(0)
       return undefined
     }
+    const shadowStatus = String(shadowProgress?.status || inlineShadowStatus || '').toUpperCase()
+    const shadowRunning = shadowStatus === 'RUNNING' || loading
+    if (shadowRunning && !showEvidenceColumn) {
+      setRevealStep(0)
+      return undefined
+    }
     setRevealStep(0)
     const hasIntraday = inline.exhibit_intraday_substantiation_map != null
     const hasDisclosure =
@@ -516,7 +544,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       if (n >= maxStep) clearInterval(tick)
     }, 380)
     return () => clearInterval(tick)
-  }, [revealKey, inline])
+  }, [revealKey, inline, shadowProgress?.status, inlineShadowStatus, loading, showEvidenceColumn])
 
   if (loading && !inline) {
     return <WipTerminal progressMsg={progressMsg} />
@@ -560,20 +588,60 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const shadowStep = 7 + intradayOffset + disclosureOffset
   const linkStep = 8 + intradayOffset + disclosureOffset
 
+  const effectiveShadowStatus = String(shadowProgress?.status || inlineShadowStatus || '').toUpperCase()
+  const shadowRunning = effectiveShadowStatus === 'RUNNING' || loading
+  const showEvidence = showEvidenceColumn || !shadowRunning
+
+  const agenticPanel = (
+    <div className="lpa-c2-dual-shadow">
+      <div className="lpa-c2-dual-banner lpa-c2-dual-banner--shadow">
+        <span className="lpa-c2-dual-chip lpa-c2-dual-chip--shadow">AGENTIC COMMITTEE</span>
+        <span className="lpa-c2-dual-banner-text">Primary review for this trade</span>
+      </div>
+      {shadowReused ? (
+        <div className="lpa-c2-reused-row">
+          <span className="lpa-c2-reused-badge">Same market snapshot — prior review reused</span>
+          {onForceFreshReview ? (
+            <button type="button" className="lpa-c2-force-fresh-btn" onClick={onForceFreshReview}>
+              Force fresh review
+            </button>
+          ) : null}
+        </div>
+      ) : shadowRunning && !shadowReused ? (
+        <div className="lpa-c2-fresh-badge">Fresh review running…</div>
+      ) : null}
+      <ShadowBoardPanel
+        shadowPayload={shadowPayload}
+        shadowLoading={shadowLoading && !shadowPayload && !shadowProgress}
+        shadowError={shadowError}
+        runningProgress={shadowProgress}
+        evidenceHash={inlineEvidenceHash}
+        showManualRun={false}
+      />
+    </div>
+  )
+
   return (
-    <div className="lpa-c2-dual">
+    <div className="lpa-c2-dual lpa-c2-dual--agentic-first">
+      {agenticPanel}
+      {!showEvidence && shadowRunning ? (
+        <p className="lpa-c2-evidence-collapsed lpa-subtle">
+          Evidence dossier is collapsed while the Agentic Committee runs. Use &quot;Show evidence dossier&quot; above to expand.
+        </p>
+      ) : null}
+      {showEvidence ? (
+    <div className="lpa-c2-dual-real">
       <div className="lpa-c2-dual-diagnostic-header">
         <span className="lpa-c2-dual-diagnostic-chip">Evidence trail</span>
         <span className="lpa-c2-dual-diagnostic-text">
-          Full reasoning trail behind the Agentic Committee — read-only investigation view.
+          Read-only investigation view — the Agentic Committee above is the verdict source.
         </span>
       </div>
-      <div className="lpa-c2-dual-real">
-        <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
-          <span className="lpa-c2-dual-chip">EVIDENCE SNAPSHOT</span>
-          <span className="lpa-c2-dual-banner-text">Frozen evidence dossier supporting the Agentic Committee review</span>
-        </div>
-        <div className="lpa-c2-exhibits">
+      <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
+        <span className="lpa-c2-dual-chip">EVIDENCE SNAPSHOT</span>
+        <span className="lpa-c2-dual-banner-text">Frozen evidence dossier supporting the Agentic Committee review</span>
+      </div>
+      <div className="lpa-c2-exhibits">
       {loading && progressMsg ? (
         <div className="lpa-c2-inline-wip">
           <span className="lpa-c2-wip-pulse" aria-hidden />
@@ -647,15 +715,6 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             </span>
           ) : null}
         </div>
-      </Reveal>
-
-      {/* Sprint 3 — agentic board explanation. Collapsed by default;
-          lazy-loads the per-specialist verdicts + chair synthesis from
-          /committee/proposal/{id}/board-explanation only when the
-          operator opens it, so we don't pay the join cost for every
-          proposal an operator just glances at. */}
-      <Reveal show={revealStep >= 0}>
-        <BoardExplanationPanel proposalId={inline.proposal_id} />
       </Reveal>
 
       <div className="lpa-c2-exhibits-cols">
@@ -873,25 +932,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       </Reveal>
         </div>
       </div>
-
-      {/* Agentic Committee — the authoritative review path. Same snapshot as
-          the evidence dossier on the left, ran by the agentic specialists +
-          chair. As of Stage 4, this is the only board that can grant Submit
-          authority. */}
-      <div className="lpa-c2-dual-shadow">
-        <div className="lpa-c2-dual-banner lpa-c2-dual-banner--shadow">
-          <span className="lpa-c2-dual-chip lpa-c2-dual-chip--shadow">AGENTIC COMMITTEE</span>
-          <span className="lpa-c2-dual-banner-text">Primary review · authoritative · grants Submit when operator commits</span>
-        </div>
-        <ShadowBoardPanel
-          shadowPayload={shadowPayload}
-          shadowLoading={shadowLoading && !shadowPayload && !shadowProgress}
-          shadowError={shadowError}
-          runningProgress={shadowProgress}
-          evidenceHash={inlineEvidenceHash}
-          showManualRun={false}
-        />
-      </div>
+      ) : null}
     </div>
   )
 }

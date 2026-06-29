@@ -62,6 +62,103 @@ function isNewDecision(ts) {
   return (Date.now() - dt.getTime()) <= 24 * 60 * 60 * 1000
 }
 
+const LPA_FLOW_STEPS = [
+  { id: 'review', label: 'Review' },
+  { id: 'outcome', label: 'Outcome' },
+  { id: 'price', label: 'Price check' },
+  { id: 'submit', label: 'Submit' },
+]
+
+const LPA_POSITIVE_AUTHORITY = new Set(['AGENTIC_APPROVE', 'AGENTIC_APPROVE_REDUCED'])
+const LPA_BLOCKING_AUTHORITY = new Set([
+  'AGENTIC_WAIT_RECLAIM',
+  'AGENTIC_DEFER',
+  'AGENTIC_REJECT',
+  'AGENTIC_DEGRADED_NO_AUTHORITY',
+  'AGENTIC_FAILED_NO_AUTHORITY',
+])
+
+function computeLpaFlowStep({
+  isStructuralEntry,
+  statusUpper,
+  canSubmit,
+  shadowIsTerminal,
+  shadowRunning,
+  authorityStatus,
+  isOperatorCommitted,
+}) {
+  if (!isStructuralEntry) return null
+  if (canSubmit) return 'submit'
+  if (
+    isOperatorCommitted
+    && LPA_POSITIVE_AUTHORITY.has(String(authorityStatus || '').toUpperCase())
+    && statusUpper !== 'REVALIDATED_PASS'
+  ) {
+    return 'price'
+  }
+  if (shadowIsTerminal) {
+    const auth = String(authorityStatus || '').toUpperCase()
+    if (LPA_BLOCKING_AUTHORITY.has(auth)) return 'outcome'
+    if (LPA_POSITIVE_AUTHORITY.has(auth) && !isOperatorCommitted) return 'outcome'
+    if (isOperatorCommitted && LPA_POSITIVE_AUTHORITY.has(auth)) return 'price'
+    return 'outcome'
+  }
+  if (shadowRunning || !shadowIsTerminal) return 'review'
+  return 'review'
+}
+
+function LpaStepIndicator({ currentStepId }) {
+  if (!currentStepId) return null
+  const idx = LPA_FLOW_STEPS.findIndex((s) => s.id === currentStepId)
+  return (
+    <div className="lpa-flow-steps" aria-label="Submission progress">
+      {LPA_FLOW_STEPS.map((step, i) => {
+        const done = idx > i
+        const active = step.id === currentStepId
+        return (
+          <Fragment key={step.id}>
+            {i > 0 ? <span className={`lpa-flow-arrow${done || active ? ' lpa-flow-arrow--lit' : ''}`} aria-hidden>→</span> : null}
+            <span
+              className={`lpa-flow-step${done ? ' lpa-flow-step--done' : ''}${active ? ' lpa-flow-step--active' : ''}`}
+            >
+              {step.label}
+            </span>
+          </Fragment>
+        )
+      })}
+    </div>
+  )
+}
+
+function lpaOutcomeMessage(authorityStatus) {
+  const s = String(authorityStatus || '').toUpperCase()
+  if (s === 'AGENTIC_WAIT_RECLAIM') {
+    return {
+      title: 'Wait / Reclaim',
+      body: 'Entry is not ready — the committee wants a better reclaim. Re-run review when price improves, or Reject this action.',
+    }
+  }
+  if (s === 'AGENTIC_DEFER') {
+    return {
+      title: 'Deferred',
+      body: 'The committee deferred this entry. Re-run review when conditions improve, or Reject.',
+    }
+  }
+  if (s === 'AGENTIC_REJECT') {
+    return {
+      title: 'Rejected',
+      body: 'The committee rejected this entry. Submit will not enable — use Reject stale to clear the row.',
+    }
+  }
+  if (s === 'AGENTIC_DEGRADED_NO_AUTHORITY' || s === 'AGENTIC_FAILED_NO_AUTHORITY') {
+    return {
+      title: 'Review unavailable',
+      body: 'The Agentic Committee did not produce a usable verdict. Re-run review or Reject.',
+    }
+  }
+  return null
+}
+
 function fmtMaybePending(v, formatter) {
   if (v == null) return 'Pending'
   return formatter(v)
@@ -292,6 +389,7 @@ export default function LivePortfolioActivity() {
   const [c20OrchestrateByAction, setC20OrchestrateByAction] = useState({})
   /** Inline proof exhibits expanded per structural entry action. */
   const [c20ExpandedByAction, setC20ExpandedByAction] = useState({})
+  const [c20AgenticVisibleByAction, setC20AgenticVisibleByAction] = useState({})
   // Stage 3: deterministic baseline panel is collapsible / visually secondary.
   // Defaults to collapsed; auto-expanded while loading or on error so the
   // operator never loses visibility on a failure mode.
@@ -324,6 +422,7 @@ export default function LivePortfolioActivity() {
   const [agenticAuthorityByAction, setAgenticAuthorityByAction] = useState({})
   const [agenticCommitBusyByAction, setAgenticCommitBusyByAction] = useState({})
   const agenticAuthorityFetchInFlightRef = useRef({})
+  const autoPriceCheckDoneRef = useRef({})
 
   useEffect(() => {
     return () => {
@@ -914,14 +1013,28 @@ export default function LivePortfolioActivity() {
   }, [shadowBoardByAction, agenticAuthorityByAction, fetchAgenticAuthority])
 
   const runCommittee2Orchestrate = useCallback(
-    async (actionId) => {
+    async (actionId, opts = {}) => {
+      const forceFreshShadow = Boolean(opts.forceFreshShadow)
       setBusy(`c2orch:${actionId}`)
       setError('')
       setNotice('')
       const progressMsgs = ['Refreshing evidence dossier…', 'Running Agentic Committee…', 'Applying agentic verdict…']
       let rot = 0
       let progressTick = null
-      setC20ExpandedByAction((prev) => ({ ...prev, [actionId]: true }))
+      setC20AgenticVisibleByAction((prev) => ({ ...prev, [actionId]: true }))
+      setShadowBoardByAction((prev) => ({
+        ...prev,
+        [actionId]: {
+          hearingId: prev[actionId]?.hearingId || null,
+          sessionId: null,
+          stance: null,
+          confidence: null,
+          status: 'RUNNING',
+          polling: true,
+          degraded: false,
+          degradedReason: null,
+        },
+      }))
       setC20OrchestrateByAction((prev) => ({
         ...prev,
         [actionId]: {
@@ -929,6 +1042,7 @@ export default function LivePortfolioActivity() {
           loading: true,
           error: null,
           progressMsg: progressMsgs[0],
+          shadowReused: null,
         },
       }))
       progressTick = setInterval(() => {
@@ -942,16 +1056,20 @@ export default function LivePortfolioActivity() {
         const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee2/orchestrate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ force_rebuild_hearing: false }),
+          body: JSON.stringify({
+            force_rebuild_hearing: false,
+            force_fresh_shadow: forceFreshShadow,
+          }),
         })
         const body = await resp.json().catch(() => null)
         if (!resp.ok) {
-          throw new Error(messageFromApiFailure(body, 'Intelligence Review orchestration failed.'))
+          throw new Error(messageFromApiFailure(body, 'Agentic Review orchestration failed.'))
         }
         if (progressTick) {
           clearInterval(progressTick)
           progressTick = null
         }
+        const shadowReused = body?.shadow_reused ?? body?.inline_hearing?.shadow_reused ?? null
         setC20OrchestrateByAction((prev) => ({
           ...prev,
           [actionId]: {
@@ -959,7 +1077,10 @@ export default function LivePortfolioActivity() {
             error: null,
             lastResult: body,
             lastAt: Date.now(),
-            progressMsg: 'Verdict received — advancing approvals & 1m revalidation…',
+            progressMsg: shadowReused
+              ? 'Prior review reused — polling Agentic Committee…'
+              : 'Fresh review running — polling Agentic Committee…',
+            shadowReused,
           },
         }))
         const _shadowHearingId = body?.hearing_id || body?.inline_hearing?.hearing_id || null
@@ -973,11 +1094,13 @@ export default function LivePortfolioActivity() {
         }))
         setNotice(
           body?.idempotent_replay
-            ? `Intelligence Review replay OK for ${actionId} (already materialized).`
-            : `Intelligence Review applied for ${actionId}.`,
+            ? `Agentic Review replay OK for ${actionId} (already materialized).`
+            : shadowReused
+              ? `Agentic Review refreshed for ${actionId} (prior session reused — same market snapshot).`
+              : `Agentic Review started for ${actionId}.`,
         )
       } catch (e) {
-        const msg = e.message || 'Intelligence Review orchestration failed.'
+        const msg = e.message || 'Agentic Review orchestration failed.'
         setC20OrchestrateByAction((prev) => ({
           ...prev,
           [actionId]: {
@@ -1198,6 +1321,28 @@ export default function LivePortfolioActivity() {
       setBusy('')
     }
   }, [load])
+
+  // Phase 5 UX: after auto-commit (or manual confirm) on APPROVE, chain price check.
+  useEffect(() => {
+    const rows = overview?.pending_decisions || []
+    rows.forEach((d) => {
+      const isEntry = Boolean(d.structural) && String(d.action_intent || '').toUpperCase() !== 'EXIT'
+      if (!isEntry) return
+      const auth = agenticAuthorityByAction[d.action_id]?.authority
+      if (!auth) return
+      const mode = String(auth.AUTHORITY_MODE || '').toUpperCase()
+      const authorityStatus = String(auth.AUTHORITY_STATUS || '').toUpperCase()
+      if (mode !== 'OPERATOR_COMMITTED' || auth.IS_STALE) return
+      if (!LPA_POSITIVE_AUTHORITY.has(authorityStatus)) return
+      const actionStatus = String(d.status || '').toUpperCase()
+      if (!['INTENT_APPROVED', 'REVALIDATED_FAIL'].includes(actionStatus)) return
+      const shadow = shadowBoardByAction[d.action_id]
+      const key = `${d.action_id}:${shadow?.sessionId || auth.SHADOW_SESSION_ID || ''}`
+      if (autoPriceCheckDoneRef.current[key]) return
+      autoPriceCheckDoneRef.current[key] = true
+      void runRevalidateForSubmit(d.action_id)
+    })
+  }, [overview, agenticAuthorityByAction, shadowBoardByAction, runRevalidateForSubmit])
 
   const submitOnly = useCallback(async (actionId) => {
     // Phase 3A: real-money confirmation gate (temporary UI guard).
@@ -1716,8 +1861,8 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Structural <strong>entry</strong>: use <strong>Run Intelligence Review</strong> (one step), then Submit.
-              Optional full hearing for deep review. Structural <strong>exit</strong>: legacy SSE <strong>replays the execution-only</strong> verdict (not Intelligence Review). Other intents: committee revalidation stream, then Submit.
+              Decisions not yet broker-opened. Structural <strong>entry</strong>: <strong>Run Agentic Review</strong>, then <strong>Check price for Submit</strong>, then Submit.
+              Structural <strong>exit</strong>: legacy SSE replay. Other intents: committee revalidation stream, then Submit.
             </div>
             {outsideHours ? <div className="lpa-subtle">Market is closed. Submit sends DAY orders that IB queues for next session.</div> : null}
             <div className="lpa-table-wrap">
@@ -1750,14 +1895,9 @@ export default function LivePortfolioActivity() {
                       const isStructuralExit = isStructuralC20 && !isStructuralEntry
                       const c20State = c20OrchestrateByAction[d.action_id] || {}
                       const c20Expanded = Boolean(c20ExpandedByAction[d.action_id])
+                      const c20AgenticVisible = Boolean(c20AgenticVisibleByAction[d.action_id])
                       const c20BaselineUserExpanded = Boolean(c20BaselineExpandedByAction[d.action_id])
-                      // Auto-expand while loading or on error so the operator
-                      // never loses visibility on a failure mode; otherwise
-                      // honor the manual collapse/expand state (default
-                      // collapsed in Stage 3 — Shadow Chair Verdict is the
-                      // primary intelligence card).
-                      const c20BaselineExpanded =
-                        c20BaselineUserExpanded || Boolean(c20State.loading) || Boolean(c20State.error)
+                      const c20BaselineExpanded = c20BaselineUserExpanded
                       const canSubmit = statusUpper === 'REVALIDATED_PASS' && Boolean(d.submission_allowed)
                       // Phase 5C: structural ENTRY actions whose underlying
                       // proposal is from a superseded board run cannot ever be
@@ -1791,6 +1931,9 @@ export default function LivePortfolioActivity() {
                         'REVALIDATED_FAIL',
                         'REVALIDATED_PASS',
                       ].includes(statusUpper)
+                      const authorityStatusForRow = String(
+                        agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_STATUS || '',
+                      ).toUpperCase()
                       return (
                     <Fragment>
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
@@ -1969,31 +2112,48 @@ export default function LivePortfolioActivity() {
                                 shadow.sessionId &&
                                 shadow.hearingId &&
                                 !isOperatorCommitted &&
-                                authorityStatus !== '' // we have at least an AUTO_AUDIT row to commit
+                                !BLOCK_LIKE.has(authorityStatus) &&
+                                POSITIVE.has(authorityStatus) &&
+                                isPreviewAutoAudit
                               const showRecommitButton =
                                 shadowIsTerminal &&
                                 shadow.sessionId &&
                                 shadow.hearingId &&
                                 isOperatorStale
                               const commitBusy = Boolean(agenticCommitBusyByAction[d.action_id])
-                              // Stage 4d — when the server reports the gate is enabled, render
-                              // the actual gate state; otherwise fall back to the Stage 4c
-                              // "would block" preview copy so operators see the future effect.
                               const gateEval = authState?.gate_evaluation || null
                               const gateEnabled = Boolean(gateEval?.gate_enabled)
                               const gateOk = gateEval ? Boolean(gateEval.gate_ok) : null
                               const gateTooltip = gateEval?.tooltip || null
                               const wouldGateBlockSubmit = BLOCK_LIKE.has(authorityStatus)
                               const gateActuallyBlocks = gateEnabled && gateOk === false
+                              const outcomeMsg = lpaOutcomeMessage(authorityStatus)
+                              const flowStepId = computeLpaFlowStep({
+                                isStructuralEntry: true,
+                                statusUpper,
+                                canSubmit,
+                                shadowIsTerminal,
+                                shadowRunning: shadow.polling || status === 'RUNNING',
+                                authorityStatus,
+                                isOperatorCommitted,
+                              })
 
                               return (
                                 <div className="lpa-c2-shadow-headline">
+                                  <LpaStepIndicator currentStepId={flowStepId} />
                                   <div className="lpa-c2-shadow-headline-head">
                                     <span className="lpa-c2-shadow-headline-title">Agentic Committee Verdict</span>
                                     <span className="lpa-c2-shadow-headline-agentic">Primary</span>
                                   </div>
+                                  {c20State.shadowReused === true ? (
+                                    <div className="lpa-c2-reused-badge">
+                                      Same market snapshot — prior review reused
+                                    </div>
+                                  ) : c20State.loading && c20State.shadowReused === false ? (
+                                    <div className="lpa-c2-fresh-badge">Fresh review running…</div>
+                                  ) : null}
                                   <div className="lpa-c2-shadow-headline-sub lpa-subtle">
-                                    Authoritative · clean APPROVE / APPROVE_REDUCED auto-commits and enables Submit; anything else awaits operator review
+                                    {d.required_next_step || 'Run Agentic Review to begin'}
                                   </div>
                                   {showStance ? (
                                     <div className="lpa-c2-shadow-headline-row">
@@ -2071,9 +2231,9 @@ export default function LivePortfolioActivity() {
                                       ) : isPreviewAutoAudit ? (
                                         <span
                                           className="lpa-authority-badge lpa-authority-badge--preview"
-                                          title="Preview only — system-observed authority. Click Apply Agentic Review to commit."
+                                          title="Auto-commit is off — confirm approval to proceed to price check."
                                         >
-                                          Preview
+                                          Awaiting confirm
                                         </span>
                                       ) : null}
                                       {authorityIsStale ? (
@@ -2116,9 +2276,9 @@ export default function LivePortfolioActivity() {
                                           className="lpa-authority-btn"
                                           disabled={commitBusy}
                                           onClick={() => commitAgenticAuthority(d.action_id)}
-                                          title="Commit this shadow verdict as the operator-authorized agentic authority for this action. Submit gating is unchanged in Stage 4c."
+                                          title="Auto-commit is disabled — confirm the committee approval to proceed to price check."
                                         >
-                                          {commitBusy ? 'Applying…' : 'Apply Agentic Review'}
+                                          {commitBusy ? 'Confirming…' : 'Confirm approval'}
                                         </button>
                                       ) : null}
                                       {showRecommitButton ? (
@@ -2132,6 +2292,17 @@ export default function LivePortfolioActivity() {
                                           {commitBusy ? 'Re-committing…' : 'Re-commit (stale)'}
                                         </button>
                                       ) : null}
+                                    </div>
+                                  ) : null}
+                                  {shadowIsTerminal && outcomeMsg ? (
+                                    <div className="lpa-outcome-card" role="status">
+                                      <strong>{outcomeMsg.title}</strong>
+                                      <p className="lpa-subtle">{outcomeMsg.body}</p>
+                                    </div>
+                                  ) : null}
+                                  {isOperatorCommitted && POSITIVE.has(authorityStatus) && statusUpper !== 'REVALIDATED_PASS' ? (
+                                    <div className="lpa-c2-approved-hint lpa-subtle">
+                                      Committee approved — run Check price for Submit when ready.
                                     </div>
                                   ) : null}
                                   {shadowIsTerminal && !authority && authState?.loading ? (
@@ -2379,7 +2550,7 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-warning-inline">
                             Safety revalidation expired —{' '}
                             {isStructuralEntry
-                              ? 'run Intelligence Review'
+                              ? 'run Agentic Review'
                               : isStructuralExit
                                 ? 'replay execution verdict (SSE)'
                                 : isStructuralC20
@@ -2388,6 +2559,30 @@ export default function LivePortfolioActivity() {
                             before submit.
                           </div>
                         ) : null}
+                        {isStructuralEntry && !proposalIsStale ? (
+                          <LpaStepIndicator
+                            currentStepId={computeLpaFlowStep({
+                              isStructuralEntry: true,
+                              statusUpper,
+                              canSubmit,
+                              shadowIsTerminal: isShadowStatusTerminal(
+                                String(shadowBoardByAction[d.action_id]?.status || '').toUpperCase(),
+                              ),
+                              shadowRunning: (
+                                shadowBoardByAction[d.action_id]?.polling
+                                || String(shadowBoardByAction[d.action_id]?.status || '').toUpperCase() === 'RUNNING'
+                              ),
+                              authorityStatus: String(
+                                agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_STATUS || '',
+                              ).toUpperCase(),
+                              isOperatorCommitted: (
+                                String(agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE || '').toUpperCase()
+                                  === 'OPERATOR_COMMITTED'
+                                && !agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE
+                              ),
+                            })}
+                          />
+                        ) : null}
                         {!canSubmit && statusUpper === 'REVALIDATED_PASS' && Array.isArray(d.submission_gate_hints) && d.submission_gate_hints.length > 0 ? (
                           <ul className="lpa-reason-list lpa-subtle">
                             {d.submission_gate_hints.map((hint, hi) => (
@@ -2395,18 +2590,19 @@ export default function LivePortfolioActivity() {
                             ))}
                           </ul>
                         ) : null}
-                        {!canSubmit && statusUpper !== 'REVALIDATED_PASS' ? (
+                        {!canSubmit && statusUpper !== 'REVALIDATED_PASS' && !isStructuralEntry ? (
                           <div className="lpa-subtle">
                             Submit to IBKR is enabled only when status is REVALIDATED_PASS (
-                            {isStructuralEntry
-                              ? 'Run Intelligence Review if needed'
-                              : isStructuralExit
-                                ? 'replay execution verdict if needed'
-                                : isStructuralC20
-                                  ? 'sync Intelligence Review if needed'
-                                  : 'run committee revalidation if needed'}
+                            {isStructuralExit
+                              ? 'replay execution verdict if needed'
+                              : isStructuralC20
+                                ? 'sync Intelligence Review if needed'
+                                : 'run committee revalidation if needed'}
                             ).
                           </div>
+                        ) : null}
+                        {!canSubmit && isStructuralEntry && !proposalIsStale ? (
+                          <div className="lpa-subtle">{d.required_next_step || 'Follow the steps above.'}</div>
                         ) : null}
                         <button
                           className="lpa-btn"
@@ -2438,9 +2634,21 @@ export default function LivePortfolioActivity() {
                               {busy === `c2orch:${d.action_id}`
                                 ? 'Running…'
                                 : c20State.lastResult
-                                  ? 'Refresh decision'
-                                  : 'Run Intelligence Review'}
+                                  ? 'Re-run Agentic Review'
+                                  : 'Run Agentic Review'}
                             </button>
+                            {(c20State.shadowReused === true
+                              || authorityStatusForRow === 'AGENTIC_WAIT_RECLAIM') ? (
+                              <button
+                                type="button"
+                                className="lpa-btn lpa-btn-secondary"
+                                disabled={busy === `c2orch:${d.action_id}` || !canRunCommittee}
+                                onClick={() => runCommittee2Orchestrate(d.action_id, { forceFreshShadow: true })}
+                                title="Force a new Agentic Committee run even when the market snapshot is unchanged."
+                              >
+                                {busy === `c2orch:${d.action_id}` ? 'Running…' : 'Force fresh review'}
+                              </button>
+                            ) : null}
                             {canRunRevalidateForSubmit ? (
                               <button
                                 type="button"
@@ -2449,7 +2657,7 @@ export default function LivePortfolioActivity() {
                                 onClick={() => runRevalidateForSubmit(d.action_id)}
                                 title="Price-check against latest market bar and enable Submit when gates pass."
                               >
-                                {busy === `revalidate:${d.action_id}` ? 'Revalidating…' : 'Revalidate for Submit'}
+                                {busy === `revalidate:${d.action_id}` ? 'Checking…' : 'Check price for Submit'}
                               </button>
                             ) : null}
                           </>
@@ -2504,9 +2712,7 @@ export default function LivePortfolioActivity() {
                               : isStructuralEntry && proposalIsStale
                                 ? 'Submit is permanently blocked for this row — the proposal is from a superseded board run. Use Reject this action above.'
                                 : isStructuralEntry
-                                  ? statusUpper === 'INTENT_APPROVED' || statusUpper === 'REVALIDATED_FAIL'
-                                    ? 'Intelligence Review is complete. Click Revalidate for Submit to price-check and reach REVALIDATED_PASS.'
-                                    : 'Run Intelligence Review refreshes the evidence dossier and runs the Agentic Committee. After committing the agentic verdict, Submit enables when REVALIDATED_PASS.'
+                                  ? d.required_next_step || 'Follow Review → Outcome → Price check → Submit.'
                                   : isStructuralExit
                                     ? 'Replay execution verdict (SSE) materializes the execution-only structural exit check. Submit enables when REVALIDATED_PASS.'
                                     : isStructuralC20
@@ -2531,7 +2737,7 @@ export default function LivePortfolioActivity() {
                       </td>
                     </tr>
                     {isStructuralEntry &&
-                    c20Expanded &&
+                    (c20AgenticVisible || c20Expanded) &&
                     !proposalIsStale &&
                     (c20State.loading || c20State.lastResult?.inline_hearing) ? (
                       // Note: deliberately do NOT gate on !c20State.error.
@@ -2557,6 +2763,9 @@ export default function LivePortfolioActivity() {
                             inline={c20State.lastResult?.inline_hearing || null}
                             loading={Boolean(c20State.loading)}
                             progressMsg={c20State.progressMsg || null}
+                            shadowReused={c20State.shadowReused === true}
+                            showEvidenceColumn={c20Expanded}
+                            onForceFreshReview={() => runCommittee2Orchestrate(d.action_id, { forceFreshShadow: true })}
                             hearingHref={
                               c20State.lastResult?.hearing_id && d.proposal_id != null
                                 ? `/structural-committee/${encodeURIComponent(c20State.lastResult.hearing_id)}?action_id=${encodeURIComponent(String(d.action_id))}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`

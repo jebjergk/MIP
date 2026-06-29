@@ -3216,3 +3216,108 @@
   color: #78909c;
   letter-spacing: 0.02em;
 }
+
+/* LPA agentic UX flow */
+.lpa-flow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 8px;
+  font-size: 11px;
+}
+
+.lpa-flow-step {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.lpa-flow-step--active {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.lpa-flow-step--done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.lpa-flow-arrow {
+  color: #cbd5e1;
+  font-size: 10px;
+}
+
+.lpa-flow-arrow--lit {
+  color: #94a3b8;
+}
+
+.lpa-outcome-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  background: rgba(255, 247, 237, 0.9);
+}
+
+.lpa-outcome-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #9a3412;
+}
+
+.lpa-c2-reused-badge,
+.lpa-c2-fresh-badge {
+  display: inline-block;
+  margin: 4px 0 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lpa-c2-reused-badge {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+}
+
+.lpa-c2-fresh-badge {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+
+.lpa-c2-approved-hint {
+  margin-top: 6px;
+  color: #166534;
+  font-weight: 600;
+}
+
+.lpa-c2-reused-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.lpa-c2-force-fresh-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(217, 119, 6, 0.45);
+  background: #fff;
+  color: #92400e;
+  cursor: pointer;
+}
+
+.lpa-c2-evidence-collapsed {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}

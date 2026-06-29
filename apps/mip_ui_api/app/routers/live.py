@@ -273,6 +273,7 @@ class Committee2OrchestrateRequest(BaseModel):
     """LPA-first Committee 2.0: optional flags only — action_id and proposal_id come from LIVE_ACTIONS."""
 
     force_rebuild_hearing: bool = False
+    force_fresh_shadow: bool = False
 
 
 class OpeningValidationRequest(BaseModel):
@@ -1352,6 +1353,64 @@ def _required_next_step_for_status(status: str) -> str:
         "EXECUTION_REQUESTED": "Await broker/order lifecycle update",
     }
     return mapping.get(status_upper, "Review action details")
+
+
+def _required_next_step_structural_entry(
+    status: str,
+    *,
+    agentic_verdict: dict | None = None,
+) -> str:
+    """Operator-facing next step for structural ENTRY rows (agentic-primary path)."""
+    status_upper = (status or "").upper()
+    av = agentic_verdict or {}
+    authority_status = str(av.get("authority_status") or "").upper()
+    gate_enabled = bool(av.get("gate_enabled"))
+    gate_ok = bool(av.get("gate_ok")) if gate_enabled else True
+    authority_mode = str(av.get("authority_mode") or "").upper()
+    is_stale = bool(av.get("is_stale"))
+
+    if authority_status == "AGENTIC_WAIT_RECLAIM":
+        return "Committee says Wait/Reclaim — re-run when entry improves"
+    if authority_status == "AGENTIC_DEFER":
+        return "Committee deferred — re-run when conditions improve or Reject"
+    if authority_status == "AGENTIC_REJECT":
+        return "Committee rejected — Reject this action"
+    if authority_status in ("AGENTIC_DEGRADED_NO_AUTHORITY", "AGENTIC_FAILED_NO_AUTHORITY"):
+        return "Run Agentic Review"
+
+    if is_stale and authority_mode == "OPERATOR_COMMITTED":
+        return "Authority stale — re-run Agentic Review"
+
+    if gate_enabled and not gate_ok:
+        if authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED"):
+            if authority_mode != "OPERATOR_COMMITTED":
+                return "Confirm approval"
+            if status_upper in ("INTENT_APPROVED", "REVALIDATED_FAIL"):
+                return "Check price for Submit"
+        elif not authority_status:
+            return "Run Agentic Review"
+
+    if status_upper in (
+        "RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION",
+        "OPEN_ELIGIBLE", "OPEN_CAUTION", "READY_FOR_APPROVAL_FLOW",
+        "PM_ACCEPTED", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED",
+    ):
+        return "Run Agentic Review"
+
+    if status_upper == "INTENT_APPROVED":
+        if gate_enabled and gate_ok:
+            return "Check price for Submit"
+        return "Run Agentic Review"
+
+    if status_upper == "REVALIDATED_FAIL":
+        return "Check price for Submit"
+
+    if status_upper == "REVALIDATED_PASS":
+        if gate_enabled and not gate_ok:
+            return "Review submission gates"
+        return "Ready to submit"
+
+    return _required_next_step_for_status(status)
 
 
 def _auto_import_latest_proposals_for_live_portfolio(
@@ -8905,7 +8964,14 @@ def get_live_activity_overview(
                 if status in ("SUPERSEDED", "REJECTED", "CANCELLED"):
                     continue
 
-                required_next_step = _required_next_step_for_status(status)
+                required_next_step = (
+                    _required_next_step_structural_entry(
+                        status,
+                        agentic_verdict=_agentic_verdict if is_structural_action and (not is_exit) else None,
+                    )
+                    if is_structural_action and (not is_exit)
+                    else _required_next_step_for_status(status)
+                )
 
                 pending_decisions.append(
                     {
@@ -12022,15 +12088,15 @@ async def _intelligence_only_shadow_kickoff(
         return None
 
     try:
-        shadow_kickoff = await kickoff_shadow_board_for_snapshot(
-            hearing_id=hearing_id,
-            proposal_id=proposal_id_int,
-            snapshot_id=int(snapshot["SNAPSHOT_ID"]),
-            evidence_pack_hash=evidence_pack_hash,
-            timeout_sec=_shadow_timeout_for_orchestrate(cur),
-            force=False,
-            action_id=action_id,
-        )
+                shadow_kickoff = await kickoff_shadow_board_for_snapshot(
+                    hearing_id=hearing_id,
+                    proposal_id=proposal_id_int,
+                    snapshot_id=int(snapshot["SNAPSHOT_ID"]),
+                    evidence_pack_hash=evidence_pack_hash,
+                    timeout_sec=_shadow_timeout_for_orchestrate(cur),
+                    force=bool(req.force_fresh_shadow),
+                    action_id=action_id,
+                )
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "intelligence_only_kickoff: shadow kickoff failed action=%s hearing=%s: %s",
@@ -12435,6 +12501,7 @@ async def orchestrate_committee2_structural_entry(
                 "derived_sizing": None,
                 "inline_hearing": inline_hearing,
                 "agentic_primary_enabled": True,
+                "shadow_reused": shadow_kickoff.get("reused") if shadow_kickoff else None,
             }
 
         mv = materialize_out or {}

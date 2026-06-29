@@ -1359,6 +1359,13 @@ def committee_shadow_board_get(
             "auto-poll loop while the shadow board is still RUNNING."
         ),
     ),
+    evidence_pack_hash: str | None = Query(
+        None,
+        description=(
+            "When set, prefer the shadow session bound to this evidence pack hash "
+            "(falls back to most-recent with stale_session=true)."
+        ),
+    ),
 ):
     """
     Retrieve the most recent shadow board session for a hearing.
@@ -1384,7 +1391,7 @@ def committee_shadow_board_get(
         conn.close()
 
     if include_progress:
-        progress = fetch_shadow_progress(hearing_id)
+        progress = fetch_shadow_progress(hearing_id, evidence_pack_hash=evidence_pack_hash)
         if progress is None:
             raise HTTPException(
                 status_code=404,
@@ -1395,7 +1402,7 @@ def committee_shadow_board_get(
             )
         return progress
 
-    result = fetch_shadow_session(hearing_id)
+    result = fetch_shadow_session(hearing_id, evidence_pack_hash=evidence_pack_hash)
     if result is None:
         raise HTTPException(
             status_code=404,

@@ -150,8 +150,10 @@ def map_shadow_to_authority_status(
     that produced the status, which is useful for the AUTHORITY_REASON_CODE
     column and for debugging.
 
-    Strictly fail-closed: any non-positive condition maps to a
-    `_NO_AUTHORITY` status.
+    Strictly fail-closed on incomplete or failed runs. When the chair has
+    finished (stage 5) with a recognized stance, a specialist-level
+    degradation (e.g. SYMBOL_BEHAVIOR JSON parse fail) does not void the
+    chair verdict — the mapped stance is still authoritative.
     """
     s = _normalize_session(session)
 
@@ -162,20 +164,23 @@ def map_shadow_to_authority_status(
     pack_version = s.get("pack_version")
     stage_reached = _coerce_int(s.get("stage_reached"))
 
-    if status != "COMPLETE":
-        return AGENTIC_FAILED_NO_AUTHORITY, f"SHADOW_STATUS_{status or 'MISSING'}"
+    if status == "FAILED":
+        return AGENTIC_FAILED_NO_AUTHORITY, "SHADOW_STATUS_FAILED"
 
-    if degraded:
-        return AGENTIC_DEGRADED_NO_AUTHORITY, "SHADOW_DEGRADED"
+    if status not in ("COMPLETE", "DEGRADED"):
+        return AGENTIC_FAILED_NO_AUTHORITY, f"SHADOW_STATUS_{status or 'MISSING'}"
 
     if stage_reached < 5:
         return AGENTIC_DEGRADED_NO_AUTHORITY, f"STAGE_REACHED_{stage_reached}"
 
+    # Incomplete chair / unknown stance on a degraded run — no usable verdict.
+    if stance not in _STANCE_TO_AUTHORITY:
+        if degraded:
+            return AGENTIC_DEGRADED_NO_AUTHORITY, "SHADOW_DEGRADED"
+        return AGENTIC_FAILED_NO_AUTHORITY, f"SHADOW_STANCE_UNKNOWN_{stance or 'NONE'}"
+
     if not is_pack_version_supported(pack_version):
         return AGENTIC_DEGRADED_NO_AUTHORITY, f"PACK_VERSION_UNSUPPORTED_{pack_version or 'NONE'}"
-
-    if stance not in _STANCE_TO_AUTHORITY:
-        return AGENTIC_FAILED_NO_AUTHORITY, f"SHADOW_STANCE_UNKNOWN_{stance or 'NONE'}"
 
     mapped = _STANCE_TO_AUTHORITY[stance]
 
@@ -183,6 +188,9 @@ def map_shadow_to_authority_status(
     # REJECT are intentional verdicts; their confidence is not a quality gate.
     if mapped in POSITIVE_AUTHORITY_STATUSES and confidence < min_confidence_threshold:
         return AGENTIC_DEGRADED_NO_AUTHORITY, f"CONFIDENCE_BELOW_THRESHOLD_{confidence:.2f}"
+
+    if degraded and status == "DEGRADED":
+        return mapped, f"SHADOW_DEGRADED_CHAIR_{stance}"
 
     return mapped, f"SHADOW_COMPLETE_{stance}"
 

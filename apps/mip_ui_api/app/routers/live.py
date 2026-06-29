@@ -1381,6 +1381,16 @@ def _required_next_step_structural_entry(
     if is_stale and authority_mode == "OPERATOR_COMMITTED":
         return "Authority stale — re-run Agentic Review"
 
+    if status_upper == "OPEN_BLOCKED":
+        if (
+            authority_mode == "OPERATOR_COMMITTED"
+            and authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED")
+        ):
+            return "Opening guard active — when market opens, click Recheck opening guard (verdict already recorded)"
+        if authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED"):
+            return "Confirm committee verdict, then wait for market open"
+        return "Run Agentic Review, then wait for market open"
+
     if gate_enabled and not gate_ok:
         if authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED"):
             if authority_mode != "OPERATOR_COMMITTED":
@@ -3346,14 +3356,17 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
     refresh_result = {"attempted": False}
     snapshot_refresh = {"attempted": False}
     if force_refresh_1m:
-        refresh_result = _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
+        pid = int(portfolio_id) if portfolio_id is not None else None
+        refresh_result = _force_refresh_latest_one_minute_bars(
+            cur, action.get("SYMBOL"), portfolio_id=pid,
+        )
         account_id = cfg.get("IBKR_ACCOUNT_ID")
         if account_id:
             try:
                 snapshot_payload = _run_on_demand_snapshot_sync(
-                    **_default_snapshot_sync_params(),
+                    **_snapshot_sync_params_for_portfolio(pid),
                     account=str(account_id),
-                    portfolio_id=int(portfolio_id) if portfolio_id is not None else None,
+                    portfolio_id=pid,
                 )
                 snapshot_refresh = {"attempted": True, "status": "SUCCESS", "payload": snapshot_payload}
             except Exception as exc:
@@ -4497,7 +4510,27 @@ def _run_agent_snowflake_query(query: str, timeout_sec: int = 120) -> list | dic
         return []
 
 
-def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> dict:
+LIVE_BARS_IB_CLIENT_ID = 9436
+
+
+def _ibkr_connect_params_for_portfolio(portfolio_id: int | None) -> dict | None:
+    """Host/port from LIVE_PORTFOLIO_CONFIG; dedicated client id for 1m bar reads."""
+    if portfolio_id is None:
+        return None
+    snap = _snapshot_sync_params_for_portfolio(portfolio_id)
+    return {
+        "host": snap["host"],
+        "port": snap["port"],
+        "client_id": LIVE_BARS_IB_CLIENT_ID,
+    }
+
+
+def _run_agent_ibkr_bar_refresh(
+    symbol: str | None,
+    timeout_sec: int = 120,
+    *,
+    portfolio_id: int | None = None,
+) -> dict:
     """
     Fetch latest 1-minute bar directly from IB Gateway via agent runtime.
     No Snowflake writes in this path.
@@ -4527,6 +4560,13 @@ def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> d
         "--window-bars",
         "1",
     ]
+    connect = _ibkr_connect_params_for_portfolio(portfolio_id)
+    if connect:
+        cmd.extend([
+            "--host", str(connect["host"]),
+            "--port", str(connect["port"]),
+            "--client-id", str(connect["client_id"]),
+        ])
     child_env = dict(os.environ)
     for key in list(child_env.keys()):
         if key.startswith("SNOWFLAKE_"):
@@ -4786,7 +4826,12 @@ def _evaluate_ibkr_news_readiness(
     }
 
 
-def _run_agent_ibkr_bar_ingest(symbol: str | None, timeout_sec: int = 180) -> dict:
+def _run_agent_ibkr_bar_ingest(
+    symbol: str | None,
+    timeout_sec: int = 180,
+    *,
+    portfolio_id: int | None = None,
+) -> dict:
     """
     Ingest latest IBKR 1-minute bars for `symbol` into MIP.MART.MARKET_BARS via
     `cursorfiles/ingest_ibkr_bars.py`. Unlike `_run_agent_ibkr_bar_refresh`
@@ -4817,6 +4862,13 @@ def _run_agent_ibkr_bar_ingest(symbol: str | None, timeout_sec: int = 180) -> di
         "--duration-str",
         "1 D",
     ]
+    connect = _ibkr_connect_params_for_portfolio(portfolio_id)
+    if connect:
+        cmd.extend([
+            "--host", str(connect["host"]),
+            "--port", str(connect["port"]),
+            "--client-id", str(connect["client_id"]),
+        ])
     child_env = dict(os.environ)
     for key in list(child_env.keys()):
         if key.startswith("SNOWFLAKE_"):
@@ -4874,7 +4926,12 @@ def _run_agent_ibkr_bar_ingest(symbol: str | None, timeout_sec: int = 180) -> di
     }
 
 
-def _force_refresh_latest_one_minute_bars(cur, symbol: str | None = None) -> dict:
+def _force_refresh_latest_one_minute_bars(
+    cur,
+    symbol: str | None = None,
+    *,
+    portfolio_id: int | None = None,
+) -> dict:
     """
     Direct IBKR 1-minute refresh used before revalidation/committee re-runs.
 
@@ -4886,10 +4943,10 @@ def _force_refresh_latest_one_minute_bars(cur, symbol: str | None = None) -> dic
     ingest result is returned under `mart_ingest`; failures there don't fail
     the refresh — the direct payload is still authoritative for the caller.
     """
-    refresh = _run_agent_ibkr_bar_refresh(symbol)
+    refresh = _run_agent_ibkr_bar_refresh(symbol, portfolio_id=portfolio_id)
     if symbol and str(refresh.get("status") or "").upper() == "SUCCESS":
         try:
-            ingest = _run_agent_ibkr_bar_ingest(symbol)
+            ingest = _run_agent_ibkr_bar_ingest(symbol, portfolio_id=portfolio_id)
         except Exception as exc:
             ingest = {
                 "attempted": True,
@@ -8885,6 +8942,22 @@ def get_live_activity_overview(
             )
 
             submission_gate_hints: list[str] = []
+            # Surface OPEN_BLOCKED clearly for structural ENTRY rows where the
+            # agentic committee already approved — operators often think they
+            # still need to "commit" or "price check" while the real blocker is
+            # the opening/market guard.
+            if (
+                status == "OPEN_BLOCKED"
+                and is_structural_action
+                and (not is_exit)
+                and _agentic_verdict.get("authority_mode") == "OPERATOR_COMMITTED"
+                and str(_agentic_verdict.get("authority_status") or "").upper()
+                in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED")
+            ):
+                submission_gate_hints.append(
+                    "Opening guard (market closed or stale snapshot) — committee verdict is done. "
+                    "Click Recheck opening guard when the market opens; no further commit needed."
+                )
             # Always surface the proposal-lineage gate as a top-priority
             # hint — it overrides everything else, because "the
             # underlying proposal is dead" is the most operator-relevant
@@ -10386,6 +10459,95 @@ def get_live_trade_committee(action_id: str):
         conn.close()
 
 
+def _try_agentic_materializer_after_opening_clear(cur, action_id: str) -> dict | None:
+    """Re-run agentic materialization once the opening guard clears.
+
+    When the operator ran Agentic Review while the market was closed, the
+    authority row may be OPERATOR_COMMITTED but LIVE_ACTIONS can remain
+    OPEN_BLOCKED / COMMITTEE_STATUS=PENDING with null sizing. After opening
+    validation passes, materialize so the row can advance to approval flow.
+    """
+    try:
+        from app.committee.agentic_authority import (
+            POSITIVE_AUTHORITY_STATUSES,
+            is_agentic_primary_materialization_enabled,
+        )
+        from app.routers.agentic_authority_router import agentic_materializer_status_eligible
+        from app.routers.committee import _underlying_sf_conn
+    except Exception as imp_exc:  # noqa: BLE001
+        _log.warning(
+            "opening materializer: import failed action=%s: %s",
+            action_id,
+            imp_exc,
+        )
+        return None
+
+    action_row = _fetch_live_action(cur, action_id)
+    if not action_row:
+        return None
+    status = str(action_row.get("STATUS") or "").upper()
+    if status == "OPEN_BLOCKED":
+        return None
+
+    eligible, eligibility_reason = agentic_materializer_status_eligible(dict(action_row))
+    if not eligible:
+        return {"ran": False, "reason": eligibility_reason, "status": status}
+
+    cur.execute(
+        """
+        select
+          AUTHORITY_ID, AUTHORITY_MODE, AUTHORITY_STATUS, AUTHORITY_CONFIDENCE,
+          COMMITTED_BY, IS_STALE, SHADOW_SIZE_POSTURE
+        from MIP.APP.V_AGENTIC_AUTHORITY_LATEST
+        where ACTION_ID = %s
+        limit 1
+        """,
+        (action_id,),
+    )
+    auth_rows = fetch_all(cur)
+    if not auth_rows:
+        return {"ran": False, "reason": "no_authority_row", "status": status}
+    authority_row = dict(auth_rows[0])
+    mode = str(authority_row.get("AUTHORITY_MODE") or "").upper()
+    auth_status = str(authority_row.get("AUTHORITY_STATUS") or "").upper()
+    if mode != "OPERATOR_COMMITTED" or auth_status not in POSITIVE_AUTHORITY_STATUSES:
+        return {"ran": False, "reason": "authority_not_committed_approve", "status": status}
+    if bool(authority_row.get("IS_STALE")):
+        return {"ran": False, "reason": "authority_stale", "status": status}
+
+    conn = cur.connection
+    if not is_agentic_primary_materialization_enabled(conn):
+        return {"ran": False, "reason": "flag_off", "status": status}
+
+    recovery_late_stage = (
+        eligibility_reason == "recovery_incomplete_contract"
+        and status in ("REVALIDATED_PASS", "REVALIDATED_FAIL")
+    )
+    raw = _underlying_sf_conn(conn)
+    raw.autocommit(False)
+    try:
+        out = _materialize_structural_entry_agentic_apply(
+            cur,
+            action_id,
+            dict(action_row),
+            authority_row,
+            apply_detail_source="OPENING_CLEAR_AGENTIC_MATERIALIZE",
+            recovery_late_stage=recovery_late_stage,
+        )
+        raw.commit()
+        return {"ran": True, "status": (out or {}).get("status"), "materializer": out}
+    except Exception as exc:  # noqa: BLE001
+        raw.rollback()
+        _log.warning(
+            "opening materializer: failed action=%s: %s",
+            action_id,
+            exc,
+        )
+        return {"ran": False, "reason": "materializer_error", "error": str(exc), "status": status}
+    finally:
+        raw.autocommit(True)
+
+
 @router.post("/trades/actions/{action_id}/opening/validate")
 def run_opening_validation(action_id: str, req: OpeningValidationRequest = Body(default_factory=OpeningValidationRequest)):
     conn = get_connection()
@@ -10399,6 +10561,7 @@ def run_opening_validation(action_id: str, req: OpeningValidationRequest = Body(
             raise HTTPException(status_code=400, detail="Invalid now_utc_iso format. Use ISO-8601.")
         gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=req.force_refresh_1m, now_utc=now_utc)
         action_after = _fetch_live_action(cur, action_id)
+        materializer_result = None
         # Opening-gate block means committee should be treated as skipped-at-gate, not still pending.
         if (
             action_after
@@ -10418,6 +10581,10 @@ def run_opening_validation(action_id: str, req: OpeningValidationRequest = Body(
                 (action_id,),
             )
             action_after = _fetch_live_action(cur, action_id)
+        elif action_after and str(action_after.get("STATUS") or "").upper() != "OPEN_BLOCKED":
+            materializer_result = _try_agentic_materializer_after_opening_clear(cur, action_id)
+            action_after = _fetch_live_action(cur, action_id)
+        next_status = str(action_after.get("STATUS") or gate.get("result") or "").upper()
         return {
             "ok": True,
             "action_id": action_id,
@@ -10425,6 +10592,7 @@ def run_opening_validation(action_id: str, req: OpeningValidationRequest = Body(
             "opening_result": gate.get("result"),
             "reason_codes": gate.get("reason_codes") or [],
             "opening_validation": gate.get("opening_validation") or {},
+            "agentic_materializer": materializer_result,
         }
     finally:
         conn.close()
@@ -10547,7 +10715,11 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         # produces deterministic verdicts that never update across re-runs.
         if req.force_rerun and _is_extended_trading_open_ny(datetime.now(timezone.utc)):
             try:
-                _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
+                _force_refresh_latest_one_minute_bars(
+                    cur,
+                    action.get("SYMBOL"),
+                    portfolio_id=int(action["PORTFOLIO_ID"]) if action.get("PORTFOLIO_ID") is not None else None,
+                )
             except Exception as exc:
                 logger.warning(
                     "force_rerun 1m refresh failed for %s: %s",
@@ -12304,7 +12476,11 @@ async def orchestrate_committee2_structural_entry(
         # orchestrate.
         if status_upper not in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
             try:
-                _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
+                _force_refresh_latest_one_minute_bars(
+                    cur,
+                    action.get("SYMBOL"),
+                    portfolio_id=int(action["PORTFOLIO_ID"]) if action.get("PORTFOLIO_ID") is not None else None,
+                )
                 try:
                     conn.commit()
                 except Exception:
@@ -13636,7 +13812,11 @@ def revalidate_live_action(
         direct_ibkr_one_min = None
         refresh_fallback_codes: list[str] = []
         if req.force_refresh_1m:
-            refresh_info = _force_refresh_latest_one_minute_bars(cur, symbol)
+            refresh_info = _force_refresh_latest_one_minute_bars(
+                cur,
+                symbol,
+                portfolio_id=int(action["PORTFOLIO_ID"]) if action.get("PORTFOLIO_ID") is not None else None,
+            )
             if str(refresh_info.get("status") or "").upper() == "SUCCESS":
                 direct_ibkr_one_min = _extract_latest_one_min_bar_from_refresh(refresh_info, symbol)
             else:

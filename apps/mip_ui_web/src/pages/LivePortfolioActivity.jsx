@@ -89,30 +89,45 @@ function computeLpaFlowStep({
 }) {
   if (!isStructuralEntry) return null
   if (canSubmit) return 'submit'
-  if (
-    isOperatorCommitted
-    && LPA_POSITIVE_AUTHORITY.has(String(authorityStatus || '').toUpperCase())
-    && statusUpper !== 'REVALIDATED_PASS'
-  ) {
-    return 'price'
+  const auth = String(authorityStatus || '').toUpperCase()
+  const positiveCommitted = isOperatorCommitted && LPA_POSITIVE_AUTHORITY.has(auth)
+  // OPEN_BLOCKED = execution/opening guard — committee may already be done.
+  if (statusUpper === 'OPEN_BLOCKED' && positiveCommitted) return 'opening'
+  if (positiveCommitted && statusUpper !== 'REVALIDATED_PASS') {
+    if (['INTENT_APPROVED', 'REVALIDATED_FAIL'].includes(statusUpper)) return 'price'
+    // Pre-approval statuses: opening guard must clear before price check.
+    if (statusUpper !== 'OPEN_BLOCKED') return 'opening'
   }
   if (shadowIsTerminal) {
-    const auth = String(authorityStatus || '').toUpperCase()
     if (LPA_BLOCKING_AUTHORITY.has(auth)) return 'outcome'
     if (LPA_POSITIVE_AUTHORITY.has(auth) && !isOperatorCommitted) return 'outcome'
-    if (isOperatorCommitted && LPA_POSITIVE_AUTHORITY.has(auth)) return 'price'
+    if (positiveCommitted) return statusUpper === 'OPEN_BLOCKED' ? 'opening' : 'price'
     return 'outcome'
   }
   if (shadowRunning || !shadowIsTerminal) return 'review'
   return 'review'
 }
 
-function LpaStepIndicator({ currentStepId }) {
+function lpaFlowStepsForRow(statusUpper) {
+  if (String(statusUpper || '').toUpperCase() === 'OPEN_BLOCKED') {
+    return [
+      { id: 'review', label: 'Review' },
+      { id: 'outcome', label: 'Outcome' },
+      { id: 'opening', label: 'Opening guard' },
+      { id: 'price', label: 'Price check' },
+      { id: 'submit', label: 'Submit' },
+    ]
+  }
+  return LPA_FLOW_STEPS
+}
+
+function LpaStepIndicator({ currentStepId, statusUpper }) {
   if (!currentStepId) return null
-  const idx = LPA_FLOW_STEPS.findIndex((s) => s.id === currentStepId)
+  const steps = lpaFlowStepsForRow(statusUpper)
+  const idx = steps.findIndex((s) => s.id === currentStepId)
   return (
     <div className="lpa-flow-steps" aria-label="Submission progress">
-      {LPA_FLOW_STEPS.map((step, i) => {
+      {steps.map((step, i) => {
         const done = idx > i
         const active = step.id === currentStepId
         return (
@@ -1322,6 +1337,36 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
+  const runOpeningValidation = useCallback(async (actionId) => {
+    setBusy(`opening:${actionId}`)
+    setError('')
+    setNotice('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/opening/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force_refresh_1m: true }),
+      })
+      const body = await resp.json().catch(() => null)
+      if (!resp.ok) {
+        throw new Error(messageFromApiFailure(body, 'Opening guard recheck failed.'))
+      }
+      const nextStatus = String(body?.status || '').toUpperCase()
+      if (nextStatus === 'OPEN_BLOCKED') {
+        setNotice('Still blocked by opening guard — market may be closed or snapshot stale.')
+        await load({ silent: true })
+        return
+      }
+      const chainStatus = String(body?.agentic_materializer?.status || nextStatus).toUpperCase()
+      setNotice(`Opening guard passed (${chainStatus || nextStatus}). Advancing approval and price check…`)
+      await advanceLiveActionAfterCommitteeApply(actionId, { action_status: chainStatus }, { isStructuralC20Flow: true })
+    } catch (e) {
+      setError(e.message || 'Opening guard recheck failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load, advanceLiveActionAfterCommitteeApply])
+
   // Phase 5 UX: after auto-commit (or manual confirm) on APPROVE, chain price check.
   useEffect(() => {
     const rows = overview?.pending_decisions || []
@@ -1915,6 +1960,19 @@ export default function LivePortfolioActivity() {
                         'INTENT_APPROVED',
                         'REVALIDATED_FAIL',
                       ].includes(statusUpper)
+                      const agenticGate = d.agentic_authority_gate || {}
+                      const agenticGateOk = Boolean(agenticGate.gate_ok)
+                      const operatorCommittedPositive = (
+                        String(agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE || '').toUpperCase()
+                          === 'OPERATOR_COMMITTED'
+                        && !agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE
+                        && LPA_POSITIVE_AUTHORITY.has(authorityStatusForRow)
+                      )
+                      const canRunOpeningRecheck = (
+                        !proposalIsStale
+                        && statusUpper === 'OPEN_BLOCKED'
+                        && (operatorCommittedPositive || agenticGateOk)
+                      )
                       const canRunCommittee = !proposalIsStale && [
                         'RESEARCH_IMPORTED',
                         'PROPOSED',
@@ -2128,6 +2186,12 @@ export default function LivePortfolioActivity() {
                               const wouldGateBlockSubmit = BLOCK_LIKE.has(authorityStatus)
                               const gateActuallyBlocks = gateEnabled && gateOk === false
                               const outcomeMsg = lpaOutcomeMessage(authorityStatus)
+                                || (shadowIsTerminal && shadowStanceRaw === 'DENY' && (authorityStatus === 'AGENTIC_FAILED_NO_AUTHORITY' || authorityStatus === 'AGENTIC_DEGRADED_NO_AUTHORITY')
+                                  ? {
+                                      title: 'Rejected',
+                                      body: 'The committee denied this entry (one specialist failed, but the chair ruling stands). Submit will not enable — use Reject stale to clear the row.',
+                                    }
+                                  : null)
                               const flowStepId = computeLpaFlowStep({
                                 isStructuralEntry: true,
                                 statusUpper,
@@ -2140,7 +2204,7 @@ export default function LivePortfolioActivity() {
 
                               return (
                                 <div className="lpa-c2-shadow-headline">
-                                  <LpaStepIndicator currentStepId={flowStepId} />
+                                  <LpaStepIndicator currentStepId={flowStepId} statusUpper={statusUpper} />
                                   <div className="lpa-c2-shadow-headline-head">
                                     <span className="lpa-c2-shadow-headline-title">Agentic Committee Verdict</span>
                                     <span className="lpa-c2-shadow-headline-agentic">Primary</span>
@@ -2224,7 +2288,7 @@ export default function LivePortfolioActivity() {
                                                   : `Committed by ${committedBy || '—'} at ${fmtTs(authority.CREATED_AT)}`
                                               }
                                             >
-                                              {isAutoCommit ? 'Auto-committed' : 'Committed'}
+                                              {isAutoCommit ? 'Verdict recorded (auto)' : 'Verdict recorded'}
                                             </span>
                                           )
                                         })()
@@ -2300,9 +2364,19 @@ export default function LivePortfolioActivity() {
                                       <p className="lpa-subtle">{outcomeMsg.body}</p>
                                     </div>
                                   ) : null}
-                                  {isOperatorCommitted && POSITIVE.has(authorityStatus) && statusUpper !== 'REVALIDATED_PASS' ? (
+                                  {statusUpper === 'OPEN_BLOCKED' && isOperatorCommitted && POSITIVE.has(authorityStatus) ? (
+                                    <div className="lpa-open-blocked-banner" role="alert">
+                                      <strong>Submit blocked — opening guard (market closed or snapshot stale)</strong>
+                                      <p className="lpa-subtle">
+                                        The Agentic Committee verdict is already recorded (see Verdict recorded below).
+                                        You do not need to commit anything else. When the market opens, click{' '}
+                                        <strong>Recheck opening guard</strong> in the action column.
+                                      </p>
+                                    </div>
+                                  ) : null}
+                                  {isOperatorCommitted && POSITIVE.has(authorityStatus) && statusUpper !== 'REVALIDATED_PASS' && statusUpper !== 'OPEN_BLOCKED' ? (
                                     <div className="lpa-c2-approved-hint lpa-subtle">
-                                      Committee approved — run Check price for Submit when ready.
+                                      Committee approved — click Check price for Submit when ready.
                                     </div>
                                   ) : null}
                                   {shadowIsTerminal && !authority && authState?.loading ? (
@@ -2572,18 +2646,17 @@ export default function LivePortfolioActivity() {
                                 shadowBoardByAction[d.action_id]?.polling
                                 || String(shadowBoardByAction[d.action_id]?.status || '').toUpperCase() === 'RUNNING'
                               ),
-                              authorityStatus: String(
-                                agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_STATUS || '',
-                              ).toUpperCase(),
+                              authorityStatus: authorityStatusForRow,
                               isOperatorCommitted: (
                                 String(agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE || '').toUpperCase()
                                   === 'OPERATOR_COMMITTED'
                                 && !agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE
                               ),
                             })}
+                            statusUpper={statusUpper}
                           />
                         ) : null}
-                        {!canSubmit && statusUpper === 'REVALIDATED_PASS' && Array.isArray(d.submission_gate_hints) && d.submission_gate_hints.length > 0 ? (
+                        {!canSubmit && Array.isArray(d.submission_gate_hints) && d.submission_gate_hints.length > 0 ? (
                           <ul className="lpa-reason-list lpa-subtle">
                             {d.submission_gate_hints.map((hint, hi) => (
                               <li key={`${d.action_id}:hint:${hi}`}>{hint}</li>
@@ -2647,6 +2720,17 @@ export default function LivePortfolioActivity() {
                                 title="Force a new Agentic Committee run even when the market snapshot is unchanged."
                               >
                                 {busy === `c2orch:${d.action_id}` ? 'Running…' : 'Force fresh review'}
+                              </button>
+                            ) : null}
+                            {canRunOpeningRecheck ? (
+                              <button
+                                type="button"
+                                className="lpa-btn lpa-btn-secondary"
+                                disabled={busy === `opening:${d.action_id}`}
+                                onClick={() => runOpeningValidation(d.action_id)}
+                                title="Re-run the opening sanity gate (market hours, snapshot freshness). Committee verdict is already done."
+                              >
+                                {busy === `opening:${d.action_id}` ? 'Rechecking…' : 'Recheck opening guard'}
                               </button>
                             ) : null}
                             {canRunRevalidateForSubmit ? (
@@ -2720,17 +2804,9 @@ export default function LivePortfolioActivity() {
                                       : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
                           </div>
                         ) : null}
-                        {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
+                        {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' && !operatorCommittedPositive ? (
                           <div className="lpa-subtle">
-                            Blocked by opening guard.{' '}
-                            {isStructuralEntry
-                              ? 'Re-run Intelligence Review'
-                              : isStructuralExit
-                                ? 'Replay execution verdict again'
-                                : isStructuralC20
-                                  ? 'Re-sync Intelligence Review'
-                                  : 'Re-run committee revalidation'}{' '}
-                            when data is fresher, or Reject stale to clear.
+                            Blocked by opening guard. Run Agentic Review when ready, or Reject stale to clear.
                           </div>
                         ) : null}
                         </div>

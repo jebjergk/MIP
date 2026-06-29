@@ -3321,3 +3321,21 @@
   background: #f8fafc;
   border: 1px dashed #cbd5e1;
 }
+
+.lpa-open-blocked-banner {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  background: rgba(254, 242, 242, 0.95);
+}
+
+.lpa-open-blocked-banner strong {
+  display: block;
+  color: #991b1b;
+  margin-bottom: 4px;
+}
+
+.lpa-flow-step--active.lpa-flow-step {
+  /* opening guard step uses same active styling */
+}

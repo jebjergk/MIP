@@ -33,7 +33,8 @@ Failure policy:
     specialist's row is NOT written; the dossier is marked INVALID and
     excluded from chair / final slate. The whole run is marked FAILED
     if any dossier has any specialist in an INVALID state by Stage 5.
-  * No deterministic fallback. No old selector. No candidate-review board.
+  * No deterministic fallback. No legacy setup-event zone backfill at publish.
+  * Chair PROPOSE requires full proposed_trade_config anchored to dossier daily close.
 
 Entry point: orchestrate_phase4_board(...)
 """
@@ -84,8 +85,8 @@ _AGENT_OBJECT_NAMES = {
 _CHAIR_AGENT_NAME = "PHASE4_CHAIR_PORTFOLIO_PM_AGENT"
 _REQUIRED_ROLES = list(_AGENT_OBJECT_NAMES.keys())
 
-_PROMPT_VERSION = "phase4_complete_v1_bounded_no_debate"
-_POLICY_VERSION = "phase4_complete_v1"
+_PROMPT_VERSION = "phase4_complete_v2_strict_geometry"
+_POLICY_VERSION = "phase4_complete_v2_no_legacy_fallback"
 _MODEL_CONFIG_MODE = "symbol_dossier_ai_complete_bounded"
 
 _CACHE_TTL_HOURS = 24
@@ -98,12 +99,13 @@ _DEFAULT_MAX_CANDIDATES: Optional[int] = 20
 _DEFAULT_MAX_LLM_CALLS_PER_RUN = 132  # 20 candidates × 6 AI_COMPLETE calls + headroom
 _DEFAULT_DAILY_RUNS_PER_PORTFOLIO = 1
 _DEFAULT_SPECIALIST_MODEL = "llama3.1-8b"
-_DEFAULT_CHAIR_MODEL = "llama3.1-8b"
-_DEFAULT_SPECIALIST_MAX_TOKENS = 1500
+_DEFAULT_CHAIR_MODEL = "mistral-large2"
+_DEFAULT_SPECIALIST_MAX_TOKENS = 2000
 _DEFAULT_CHAIR_MAX_TOKENS = 4000
 _DEFAULT_MAX_EVIDENCE_CHARS = 80_000
 _DEFAULT_STATEMENT_TIMEOUT_SEC = 240
-_COMPLETE_MAX_RETRIES = 1
+_DEFAULT_MAX_ENTRY_ZONE_DISTANCE_PCT = 3.0
+_COMPLETE_MAX_RETRIES = 2
 
 # Legacy CLI budget alias (LLM calls, not agent sessions).
 _DEFAULT_DAILY_CALL_BUDGET: int = _DEFAULT_MAX_LLM_CALLS_PER_RUN
@@ -453,6 +455,93 @@ def _to_int(v: Any) -> Optional[int]:
         return None
 
 
+def _sanitize_evidence_used(raw: Any) -> List[str]:
+    """Specialists sometimes echo full EVIDENCE_JSON into evidence_used — normalize."""
+    if isinstance(raw, list):
+        out: List[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip()[:40])
+            elif isinstance(item, dict):
+                label = item.get("slice") or item.get("name") or next(iter(item.keys()), "history")
+                out.append(str(label)[:40])
+        if out:
+            return out[:12]
+    if isinstance(raw, dict):
+        return [str(k)[:40] for k in list(raw.keys())[:12]]
+    return ["history"]
+
+
+def _sanitize_specialist_output(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return raw
+    out = dict(raw)
+    out["evidence_used"] = _sanitize_evidence_used(out.get("evidence_used"))
+    rationale = out.get("rationale")
+    if isinstance(rationale, str) and len(rationale) > 4000:
+        out["rationale"] = rationale[:4000]
+    return out
+
+
+def _dossier_current_price(payload: Dict[str, Any]) -> Optional[float]:
+    if not isinstance(payload, dict):
+        return None
+    price_block = payload.get("price")
+    if isinstance(price_block, dict):
+        val = _to_float(price_block.get("current_price"))
+        if val is not None and val > 0:
+            return val
+    return _to_float(payload.get("current_price"))
+
+
+def _validate_chair_trade_geometry(
+    final_action: str,
+    final_direction: str,
+    config: Dict[str, Any],
+    dossier_payload: Dict[str, Any],
+    *,
+    max_zone_distance_pct: float = _DEFAULT_MAX_ENTRY_ZONE_DISTANCE_PCT,
+) -> Optional[str]:
+    """Return invalid_reason when PROPOSE geometry is missing or incoherent vs today's close."""
+    if final_action not in {"PROPOSE_LONG", "PROPOSE_SHORT"}:
+        return None
+
+    required = (
+        "entry_zone_low", "entry_zone_high", "invalidation_level",
+        "invalidation_rule", "exit_profile", "size_treatment", "risk_class", "time_horizon",
+    )
+    for key in required:
+        val = config.get(key)
+        if val is None or (isinstance(val, str) and not str(val).strip()):
+            return f"PROPOSED_TRADE_CONFIG_MISSING:{key}"
+
+    ez_low = _to_float(config.get("entry_zone_low"))
+    ez_high = _to_float(config.get("entry_zone_high"))
+    inv = _to_float(config.get("invalidation_level"))
+    if ez_low is None or ez_high is None or inv is None:
+        return "PROPOSED_TRADE_CONFIG_NON_NUMERIC_GEOMETRY"
+    if ez_low <= 0 or ez_high <= 0 or inv <= 0:
+        return "PROPOSED_TRADE_CONFIG_NON_POSITIVE_GEOMETRY"
+    if ez_low >= ez_high:
+        return "PROPOSED_TRADE_CONFIG_INVERTED_ZONE"
+
+    direction = (final_direction or "").upper()
+    if direction == "LONG" and inv >= ez_low:
+        return "PROPOSED_TRADE_CONFIG_INVALID_LONG_INVALIDATION"
+    if direction == "SHORT" and inv <= ez_high:
+        return "PROPOSED_TRADE_CONFIG_INVALID_SHORT_INVALIDATION"
+
+    current = _dossier_current_price(dossier_payload)
+    if current is None or current <= 0:
+        return "DOSSIER_CURRENT_PRICE_MISSING"
+    mid = (ez_low + ez_high) / 2.0
+    dist_pct = abs(current - mid) / mid * 100.0
+    if dist_pct > max_zone_distance_pct:
+        return f"ENTRY_ZONE_STALE_VS_DAILY_CLOSE:{dist_pct:.2f}pct"
+
+    return None
+
+
 def _truncate(s: Any, n: int) -> Optional[str]:
     if s is None:
         return None
@@ -655,8 +744,8 @@ def _snapshot_dossiers(
         SYMBOL,
         MARKET_TYPE,
         TRY_TO_DOUBLE(DOSSIER_PAYLOAD_JSON:price:current_price::STRING),
-        DOSSIER_PAYLOAD_JSON:price:price_source::STRING,
-        TRY_TO_DATE(DOSSIER_PAYLOAD_JSON:price:price_date::STRING),
+        DOSSIER_PAYLOAD_JSON:price:current_price_source::STRING,
+        TRY_TO_DATE(DOSSIER_PAYLOAD_JSON:price:current_price_date::STRING),
         TRY_TO_NUMBER(DOSSIER_PAYLOAD_JSON:primary_evidence_setup_event_id::STRING),
         DOSSIER_PAYLOAD_JSON:policy:short_research_visible::BOOLEAN,
         DOSSIER_PAYLOAD_JSON:policy:short_live_enabled::BOOLEAN,
@@ -765,6 +854,7 @@ async def _run_one_specialist(
         elapsed = time.monotonic() - t0
 
     parsed = result.parsed
+    parsed = _sanitize_specialist_output(parsed)
     pos = _validate_specialist(role, parsed)
     if pos.invalid_reason and parsed is None and result.error:
         pos.invalid_reason = "COMPLETE_ERROR:" + str(result.error)[:200]
@@ -1163,7 +1253,10 @@ def _primary_setup_event_id(payload: Dict[str, Any]) -> Optional[int]:
         return None
 
 
-def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
+def _validate_chair(
+    raw: Optional[Dict[str, Any]],
+    dossier_payload: Optional[Dict[str, Any]] = None,
+) -> ChairOutput:
     if not isinstance(raw, dict):
         return ChairOutput(
             final_action="", final_direction="", primary_reason_code="",
@@ -1204,6 +1297,12 @@ def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
         msm_invalid = _chair_structure_summary_output_invalid(raw)
         if msm_invalid:
             invalid = msm_invalid
+    if invalid is None and isinstance(dossier_payload, dict):
+        geom_invalid = _validate_chair_trade_geometry(
+            final_action, final_direction, config or {}, dossier_payload,
+        )
+        if geom_invalid:
+            invalid = geom_invalid
 
     return ChairOutput(
         final_action=final_action,
@@ -1429,7 +1528,7 @@ async def _orchestrate_dossier(
     }
 
     chair_parsed = _backfill_chair_from_evidence(chair_result.parsed, dossier_payload)
-    chair = _validate_chair(chair_parsed)
+    chair = _validate_chair(chair_parsed, dossier_payload)
     res.chair = chair
 
     if chair.invalid_reason:
@@ -2244,31 +2343,10 @@ def _publish_to_structural(
             s.PORTFOLIO_ID, s.SYMBOL,
             v.FINAL_DIRECTION,
             LEFT(v.PTC:thesis_label::STRING, 80),
-            COALESCE(
-                TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
-                TRY_TO_DOUBLE(ev.ENTRY_ZONE_LOW::STRING),
-                IFF(v.FINAL_DIRECTION = 'LONG',
-                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_price::STRING),
-                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_price::STRING)
-                )
-            ),
-            COALESCE(
-                TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING),
-                TRY_TO_DOUBLE(ev.ENTRY_ZONE_HIGH::STRING),
-                IFF(v.FINAL_DIRECTION = 'LONG',
-                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_price::STRING),
-                    TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_price::STRING)
-                )
-            ),
-            COALESCE(
-                TRY_TO_DOUBLE(v.PTC:invalidation_level::STRING),
-                TRY_TO_DOUBLE(ev.PRICE_INVALIDATION_LEVEL::STRING),
-                IFF(v.FINAL_DIRECTION = 'LONG',
-                    TRY_TO_DOUBLE(ev.ENTRY_ZONE_LOW::STRING) * 0.985,
-                    TRY_TO_DOUBLE(ev.ENTRY_ZONE_HIGH::STRING) * 1.015
-                )
-            ),
-            LEFT(COALESCE(v.PTC:invalidation_rule::STRING, 'AGENTIC_INVALIDATION'), 30),
+            TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
+            TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING),
+            TRY_TO_DOUBLE(v.PTC:invalidation_level::STRING),
+            LEFT(v.PTC:invalidation_rule::STRING, 30),
             -- TRAIL_STYLE: canonical 'PCT' for any TRAIL_* profile, NULL when
             -- chair explicitly chose FIXED_STANDARD.
             CASE WHEN v.DERIVED_EXIT_PROFILE = 'FIXED_STANDARD' THEN NULL ELSE 'PCT' END,
@@ -2381,6 +2459,16 @@ def _publish_to_structural(
           AND v.RANK <= %(max_props)s
           AND s.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
           AND v.PTC:thesis_label::STRING ILIKE 'AGENTIC_%%'
+          AND (
+              v.FINAL_ACTION IN ('WATCH_LONG', 'WATCH_SHORT')
+              OR (
+                  TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING) IS NOT NULL
+                  AND TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING) IS NOT NULL
+                  AND TRY_TO_DOUBLE(v.PTC:invalidation_level::STRING) IS NOT NULL
+                  AND NULLIF(TRIM(v.PTC:invalidation_rule::STRING), '') IS NOT NULL
+              )
+          )
+          -- PROPOSE_* requires chair-authored geometry — no legacy setup-event fallbacks.
           -- Phase 4 taxonomy v2: hard STOCK-only publication guard.
           AND s.MARKET_TYPE = 'STOCK'
           -- Allow PROPOSE_SHORT unconditionally; policy recorded in EXECUTION_POLICY_STATUS.
@@ -2477,6 +2565,28 @@ def _publish_to_structural(
            )
         """,
         {"run_id": run_id},
+    )
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET EXECUTION_POLICY_STATUS = 'GEOMETRY_INVALID',
+               EXECUTION_POLICY_REASON = 'ENTRY_ZONE_STALE_VS_DAILY_CLOSE',
+               IS_RESEARCH_ONLY = TRUE
+          FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+           AND s.RUN_ID = p.BOARD_RUN_ID
+           AND s.DOSSIER_ID = p.BOARD_DOSSIER_ID
+           AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+           AND p.ENTRY_ZONE_LOW IS NOT NULL
+           AND p.ENTRY_ZONE_HIGH IS NOT NULL
+           AND TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:price:current_price::STRING) IS NOT NULL
+           AND ABS(
+               TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:price:current_price::STRING)
+               - (p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2
+           ) / NULLIF((p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2, 0) * 100
+               > %(max_zone_dist_pct)s
+        """,
+        {"run_id": run_id, "max_zone_dist_pct": _DEFAULT_MAX_ENTRY_ZONE_DISTANCE_PCT},
     )
     cur.execute(
         """

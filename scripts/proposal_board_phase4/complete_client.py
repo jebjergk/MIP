@@ -70,6 +70,12 @@ def _parse_json_object(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
     s = text.strip()
+    # Strip common markdown fences the model sometimes wraps around JSON.
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if len(lines) >= 2:
+            s = "\n".join(lines[1:])
+        s = s.removesuffix("```").strip()
     # AI_COMPLETE often returns a JSON string literal whose value is JSON text.
     for _ in range(3):
         try:

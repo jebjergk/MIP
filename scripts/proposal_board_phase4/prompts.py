@@ -86,6 +86,13 @@ _EVIDENCE_PREAMBLE = (
     "Do NOT request additional data. Reason ONLY from EVIDENCE_JSON and BOARD_INPUT_JSON."
 )
 
+_EVIDENCE_USED_RULE = (
+    "CRITICAL OUTPUT RULE — evidence_used: MUST be a short JSON array of slice NAME "
+    "strings only (e.g. [\"price\", \"levels\", \"history\"]). "
+    "NEVER echo, copy, or embed EVIDENCE_JSON data inside evidence_used. "
+    "Keep rationale under 400 characters. Omit null optional fields."
+)
+
 
 def _score_props() -> Dict[str, Any]:
     return {
@@ -126,6 +133,41 @@ def _string_prop() -> Dict[str, Any]:
 
 def _nullable_string_prop() -> Dict[str, Any]:
     return {"type": ["string", "null"]}
+
+
+def _proposed_trade_config_schema(*, strict: bool) -> Dict[str, Any]:
+    props = {
+        "thesis_label": _string_prop(),
+        "entry_zone_low": {"type": "number"},
+        "entry_zone_high": {"type": "number"},
+        "invalidation_level": {"type": "number"},
+        "invalidation_rule": _string_prop(),
+        "target_policy": {"type": "object"},
+        "exit_profile": _string_prop(),
+        "trailing_policy": {"type": "object"},
+        "size_treatment": _string_prop(),
+        "risk_class": _string_prop(),
+        "time_horizon": _string_prop(),
+        "primary_evidence_setup_event_id": {"type": ["integer", "null"]},
+    }
+    schema: Dict[str, Any] = {
+        "type": "object",
+        "properties": props,
+        "additionalProperties": True,
+    }
+    if strict:
+        schema["required"] = [
+            "thesis_label",
+            "entry_zone_low",
+            "entry_zone_high",
+            "invalidation_level",
+            "invalidation_rule",
+            "exit_profile",
+            "size_treatment",
+            "risk_class",
+            "time_horizon",
+        ]
+    return schema
 
 
 def specialist_response_format(role: str) -> Dict[str, Any]:  # noqa: ARG001
@@ -193,7 +235,7 @@ def chair_response_format() -> Dict[str, Any]:
                 "market_structure_read": {"type": "object"},
                 "body_wick_break_read": _string_prop(),
                 "structure_decision_reason": _string_prop(),
-                "proposed_trade_config": {"type": "object"},
+                "proposed_trade_config": _proposed_trade_config_schema(strict=False),
                 "evidence_used": {"type": "array", "items": _string_prop()},
             },
             "required": [
@@ -222,14 +264,18 @@ market_structure_map (primary_structure, structure_health, BOS/CHOCH), structure
 If recent_cluster is rejective and range position is high (>=80), do NOT call TREND_UP without explanation.
 
 OUTPUT JSON fields: role, verdict, primary_reason_code, secondary_reason_code (null ok),
-confidence, long_score, short_score, no_trade_score, rationale, evidence_used.""",
+confidence, long_score, short_score, no_trade_score, rationale, evidence_used.
+
+""" + _EVIDENCE_USED_RULE,
 
     "LEVEL_PRICE_ACTION": """You are the LEVEL_PRICE_ACTION specialist on the Phase 4 Proposal Board.
 Assess price location vs support/resistance from EVIDENCE_JSON. Be factual about distances.
 Use levels, candle_psychology, market_structure_map, actionability_context.
 
 OUTPUT JSON fields: role, verdict, primary_reason_code, secondary_reason_code (null ok),
-confidence, long_score, short_score, no_trade_score, rationale, evidence_used.""",
+confidence, long_score, short_score, no_trade_score, rationale, evidence_used.
+
+""" + _EVIDENCE_USED_RULE,
 
     "THESIS": """You are the THESIS specialist on the Phase 4 Proposal Board.
 Assess long/short/no-trade thesis from structural evidence. Setup events are evidence-only.
@@ -238,14 +284,19 @@ If continuation_quality is CONTESTED/REJECTED, prefer WATCH_* over LONG_THESIS u
 
 OUTPUT JSON fields: role, verdict, primary_reason_code, secondary_reason_code (null ok),
 confidence, long_score, short_score, no_trade_score, thesis_text, why_long, why_short,
-why_no_trade, opposing_evidence, needed_confirmation, rationale, evidence_used.""",
+why_no_trade, opposing_evidence, needed_confirmation, rationale, evidence_used.
+
+""" + _EVIDENCE_USED_RULE,
 
     "HISTORICAL_EVIDENCE": """You are the HISTORICAL_EVIDENCE specialist on the Phase 4 Proposal Board.
 Assess historical setup outcomes, memory, and invalidation evidence from EVIDENCE_JSON.
 Read both long and short history; state if short history is more favorable.
+Summarize history in rationale — do NOT copy history arrays into the response.
 
 OUTPUT JSON fields: role, verdict, primary_reason_code, secondary_reason_code (null ok),
-confidence, long_score, short_score, no_trade_score, rationale, evidence_used.""",
+confidence, long_score, short_score, no_trade_score, rationale, evidence_used.
+
+""" + _EVIDENCE_USED_RULE,
 
     "RISK_EXECUTION": """You are the RISK_EXECUTION specialist on the Phase 4 Proposal Board.
 Assess operational feasibility: invalidation proximity, policy flags, actionability_context.
@@ -254,7 +305,9 @@ If short_live_enabled=false, do not return ACTIONABLE for shorts; use RESEARCH_O
 If overhead resistance <3%% for LONG direction, prefer WAIT_CONFIRMATION over ACTIONABLE.
 
 OUTPUT JSON fields: role, verdict, primary_reason_code, secondary_reason_code (null ok),
-confidence, long_score, short_score, no_trade_score, rationale, evidence_used.""",
+confidence, long_score, short_score, no_trade_score, rationale, evidence_used.
+
+""" + _EVIDENCE_USED_RULE,
 }
 
 _CHAIR_PROMPT = """You are the CHAIR / Portfolio PM of the Phase 4 Proposal Board.
@@ -270,6 +323,19 @@ HARD RULES (summary):
 - For PROPOSE_*, WATCH_*_FAILURE, WAIT_FOR_CONFIRMATION: emit market_structure_read,
   body_wick_break_read, structure_decision_reason citing market_structure_map.
 - exit_profile: TRAIL_TIGHT | TRAIL_STANDARD | TRAIL_WIDE | FIXED_STANDARD.
+
+PROPOSE_LONG / PROPOSE_SHORT — proposed_trade_config is MANDATORY and COMPLETE:
+- Anchor entry_zone_low and entry_zone_high to TODAY's EVIDENCE_JSON.price.current_price and
+  EVIDENCE_JSON.levels (support/resistance). The zone midpoint must be within 3%% of current_price.
+- LONG: entry_zone_low < entry_zone_high; invalidation_level MUST be below entry_zone_low.
+- SHORT: entry_zone_low < entry_zone_high; invalidation_level MUST be above entry_zone_high.
+- NEVER reuse setup_events_evidence_only zones or prior-day levels without re-anchoring to current_price.
+- Required fields: thesis_label, entry_zone_low, entry_zone_high, invalidation_level,
+  invalidation_rule, exit_profile, size_treatment, risk_class, time_horizon,
+  primary_evidence_setup_event_id (from dossier when present).
+- Do NOT PROPOSE if you cannot author a coherent zone for today's close.
+
+""" + _EVIDENCE_USED_RULE + """
 
 OUTPUT JSON per schema: role CHAIR_PORTFOLIO_PM, final_action, final_direction, primary_reason_code,
 thesis_health, prior_thesis_reference (nullable), scores, final_thesis, why_not_opposite,

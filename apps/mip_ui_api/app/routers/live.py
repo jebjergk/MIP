@@ -1359,6 +1359,7 @@ def _required_next_step_structural_entry(
     status: str,
     *,
     agentic_verdict: dict | None = None,
+    reason_codes: list | None = None,
 ) -> str:
     """Operator-facing next step for structural ENTRY rows (agentic-primary path)."""
     status_upper = (status or "").upper()
@@ -1382,11 +1383,16 @@ def _required_next_step_structural_entry(
         return "Authority stale — re-run Agentic Review"
 
     if status_upper == "OPEN_BLOCKED":
+        rc_list = list(reason_codes or [])
+        if _reason_codes_include_bracket_contract_block(rc_list):
+            return "Bracket contract incomplete — TP/SL not seeded; refresh page after fix or re-run Agentic Review"
         if (
             authority_mode == "OPERATOR_COMMITTED"
             and authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED")
         ):
-            return "Opening guard active — when market opens, click Recheck opening guard (verdict already recorded)"
+            if _reason_codes_include_opening_guard_block(rc_list):
+                return "Opening guard active — when market opens, click Recheck opening guard (verdict already recorded)"
+            return "Action blocked after approval — check reason codes or click Recheck opening guard"
         if authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED"):
             return "Confirm committee verdict, then wait for market open"
         return "Run Agentic Review, then wait for market open"
@@ -2063,6 +2069,17 @@ def _live_rr_meets_min_floor(
     return (tr / sl) >= float(min_rr) - 1e-12
 
 
+def _normalize_bust_pct_cap(raw: float | None) -> float | None:
+    """BUST_PCT<=0 means unset (no portfolio stop cap). Zero must not zero out SL math."""
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
 def _joint_decision_stop_loss_pct(
     joint_decision: dict | None,
     bust_pct_default: float | None,
@@ -2074,8 +2091,9 @@ def _joint_decision_stop_loss_pct(
             stop_loss_pct = float(jd.get("stop_loss_pct"))
     except (TypeError, ValueError):
         stop_loss_pct = None
-    if stop_loss_pct is not None and bust_pct_default is not None:
-        stop_loss_pct = min(float(stop_loss_pct), float(bust_pct_default))
+    bust_cap = _normalize_bust_pct_cap(bust_pct_default)
+    if stop_loss_pct is not None and bust_cap is not None:
+        stop_loss_pct = min(float(stop_loss_pct), bust_cap)
     return stop_loss_pct
 
 
@@ -2163,8 +2181,9 @@ def _load_executable_entry_bracket_for_action(
                 except Exception:
                     tr, sl = None, None
                 else:
-                    if sl is not None and bust_pct_default is not None:
-                        sl = min(float(sl), float(bust_pct_default))
+                    bust_cap = _normalize_bust_pct_cap(bust_pct_default)
+                    if sl is not None and bust_cap is not None:
+                        sl = min(float(sl), bust_cap)
                     if tr is not None and tr > 0 and sl is not None and sl > 0:
                         return tr, sl, "structural_contract"
             jd_sc = sec.get("joint_decision")
@@ -2184,8 +2203,9 @@ def _load_executable_entry_bracket_for_action(
             except Exception:
                 tr, sl = None, None
             else:
-                if sl is not None and bust_pct_default is not None:
-                    sl = min(float(sl), float(bust_pct_default))
+                bust_cap = _normalize_bust_pct_cap(bust_pct_default)
+                if sl is not None and bust_cap is not None:
+                    sl = min(float(sl), bust_cap)
                 if tr is not None and tr > 0 and sl is not None and sl > 0:
                     return tr, sl, "snapshot"
     if not committee_run_id:
@@ -2212,10 +2232,10 @@ def _load_executable_entry_bracket_for_action(
         if early_exit_target_return is not None
         else (float(realistic_target_return) if realistic_target_return is not None else None)
     )
-    stop_loss_pct_default = float(bust_pct_default) if bust_pct_default is not None else None
+    stop_loss_pct_default = _normalize_bust_pct_cap(bust_pct_default)
     stop_loss_pct = float(committee_stop_loss_pct) if committee_stop_loss_pct is not None else stop_loss_pct_default
     if stop_loss_pct is not None and stop_loss_pct_default is not None:
-        stop_loss_pct = min(float(stop_loss_pct), float(stop_loss_pct_default))
+        stop_loss_pct = min(float(stop_loss_pct), stop_loss_pct_default)
     if target_return is not None and stop_loss_pct is not None:
         return target_return, stop_loss_pct, "verdict"
     return None, None, "none"
@@ -2301,6 +2321,22 @@ def _is_entry_bracket_hard_block_code(code: str) -> bool:
     return u in _ENTRY_BRACKET_HARD_BLOCK_CODES or u.startswith("LIVE_BRACKET_")
 
 
+def _reason_codes_include_bracket_contract_block(reason_codes: list | None) -> bool:
+    return any(_is_entry_bracket_hard_block_code(rc) for rc in (reason_codes or []))
+
+
+def _reason_codes_include_opening_guard_block(reason_codes: list | None) -> bool:
+    opening_codes = {
+        "OPEN_MARKET_CLOSED",
+        "OPEN_SNAPSHOT_MISSING",
+        "OPEN_SNAPSHOT_STALE",
+        "OPEN_GAP_BLOCK",
+        "OPEN_LIVE_GUARD_FAILED",
+        "OPEN_MISSING_SYMBOL",
+    }
+    return any(str(rc or "").strip().upper() in opening_codes for rc in (reason_codes or []))
+
+
 def _strip_recomputable_entry_bracket_codes(reason_codes: list[str]) -> list[str]:
     return [rc for rc in reason_codes if not _is_entry_bracket_hard_block_code(rc)]
 
@@ -2355,12 +2391,9 @@ def _preflight_entry_bracket_hard_block_reason_codes(cur, action: dict) -> list[
     if not _live_execution_requires_ib_risk_gates(live_cfg):
         return []
 
-    bust_pct_default = None
-    try:
-        if live_cfg.get("BUST_PCT") is not None:
-            bust_pct_default = float(live_cfg.get("BUST_PCT"))
-    except Exception:
-        bust_pct_default = None
+    bust_pct_default = _normalize_bust_pct_cap(
+        float(live_cfg.get("BUST_PCT")) if live_cfg.get("BUST_PCT") is not None else None
+    )
 
     entry_price = _structural_ref_price_for_bracket(action)
     ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
@@ -2952,6 +2985,9 @@ def _apply_post_committee_entry_viability_and_qty(
     )
     cfg_rows = fetch_all(cur)
     live_cfg = cfg_rows[0] if cfg_rows else {}
+    bust_pct_default = _normalize_bust_pct_cap(
+        float(live_cfg.get("BUST_PCT")) if live_cfg.get("BUST_PCT") is not None else None
+    )
     if not _live_execution_requires_ib_risk_gates(live_cfg):
         _seed_executable_bracket_from_joint_decision(
             cur, action_id, joint_decision, bust_pct_default=bust_pct_default,
@@ -2959,12 +2995,6 @@ def _apply_post_committee_entry_viability_and_qty(
         return committee_qty, reason_codes
 
     side_u = str(side or "").upper()
-    bust_pct_default = None
-    try:
-        if live_cfg.get("BUST_PCT") is not None:
-            bust_pct_default = float(live_cfg.get("BUST_PCT"))
-    except Exception:
-        bust_pct_default = None
 
     orig_target_return, orig_stop_loss_pct = _live_target_and_stop_from_joint_decision(
         joint_decision, bust_pct_default
@@ -8831,6 +8861,19 @@ def get_live_activity_overview(
                             action_reason_codes.append(pbc)
                 else:
                     action_reason_codes = _strip_recomputable_entry_bracket_codes(action_reason_codes)
+                    execution_hard_blocked = bool(
+                        action_reason_codes
+                        and (
+                            any(str(x).upper() in hard_block_codes for x in action_reason_codes)
+                            or bool(
+                                action_reason_codes
+                                and any(
+                                    str(x).strip().upper().startswith("LIVE_BRACKET_")
+                                    for x in action_reason_codes
+                                )
+                            )
+                        )
+                    )
             # Proposal-lineage freshness gate (Patch Group A, post-Phase-3
             # operator-safety hardening). For STRUCTURAL ENTRY actions
             # only: a live action whose parent proposal has been EXPIRED
@@ -8954,10 +8997,21 @@ def get_live_activity_overview(
                 and str(_agentic_verdict.get("authority_status") or "").upper()
                 in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED")
             ):
-                submission_gate_hints.append(
-                    "Opening guard (market closed or stale snapshot) — committee verdict is done. "
-                    "Click Recheck opening guard when the market opens; no further commit needed."
-                )
+                if _reason_codes_include_bracket_contract_block(action_reason_codes):
+                    submission_gate_hints.append(
+                        "Bracket contract incomplete (TP/SL missing) — not an opening-guard issue. "
+                        "Verdict is recorded; fix bracket seeding or refresh after server update."
+                    )
+                elif _reason_codes_include_opening_guard_block(action_reason_codes):
+                    submission_gate_hints.append(
+                        "Opening guard (market closed or stale snapshot) — committee verdict is done. "
+                        "Click Recheck opening guard when the market opens; no further commit needed."
+                    )
+                else:
+                    submission_gate_hints.append(
+                        "Action blocked after agentic approval — expand reason codes; "
+                        "Recheck opening guard only helps for market-hours / snapshot issues."
+                    )
             # Always surface the proposal-lineage gate as a top-priority
             # hint — it overrides everything else, because "the
             # underlying proposal is dead" is the most operator-relevant
@@ -9041,6 +9095,7 @@ def get_live_activity_overview(
                     _required_next_step_structural_entry(
                         status,
                         agentic_verdict=_agentic_verdict if is_structural_action and (not is_exit) else None,
+                        reason_codes=action_reason_codes if is_structural_action and (not is_exit) else None,
                     )
                     if is_structural_action and (not is_exit)
                     else _required_next_step_for_status(status)

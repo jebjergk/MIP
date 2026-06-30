@@ -217,5 +217,32 @@ class TestClassifyBlockedBracket(unittest.TestCase):
         self.assertFalse(det["baseline_passes_bracket_risk_at_probe_notional"])
 
 
+class TestBustPctCapNormalization(unittest.TestCase):
+    def test_zero_bust_pct_does_not_zero_stop_loss(self):
+        from app.routers.live import (
+            _joint_decision_stop_loss_pct,
+            _live_target_and_stop_from_joint_decision,
+            _normalize_bust_pct_cap,
+        )
+
+        self.assertIsNone(_normalize_bust_pct_cap(0.0))
+        self.assertIsNone(_normalize_bust_pct_cap(-0.1))
+        self.assertEqual(_normalize_bust_pct_cap(0.2), 0.2)
+
+        jd = {"stop_loss_pct": 0.014332, "realistic_target_return": 0.02}
+        sl = _joint_decision_stop_loss_pct(jd, 0.0)
+        self.assertAlmostEqual(sl, 0.014332)
+
+        tr, sl2 = _live_target_and_stop_from_joint_decision(jd, 0.0)
+        self.assertAlmostEqual(tr, 0.02)
+        self.assertAlmostEqual(sl2, 0.014332)
+
+    def test_positive_bust_pct_caps_stop(self):
+        from app.routers.live import _joint_decision_stop_loss_pct
+
+        jd = {"stop_loss_pct": 0.05}
+        self.assertAlmostEqual(_joint_decision_stop_loss_pct(jd, 0.02), 0.02)
+
+
 if __name__ == "__main__":
     unittest.main()

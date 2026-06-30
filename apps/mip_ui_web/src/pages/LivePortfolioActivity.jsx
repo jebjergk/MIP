@@ -1353,7 +1353,19 @@ export default function LivePortfolioActivity() {
       }
       const nextStatus = String(body?.status || '').toUpperCase()
       if (nextStatus === 'OPEN_BLOCKED') {
-        setNotice('Still blocked by opening guard — market may be closed or snapshot stale.')
+        const opening = body?.opening_validation || {}
+        const reasons = Array.isArray(opening.reasons) ? opening.reasons : (body?.reason_codes || [])
+        const refresh = opening?.refresh?.bars || {}
+        const refreshStatus = String(refresh?.status || 'NOT_ATTEMPTED').toUpperCase()
+        const reasonText = reasons.length
+          ? reasons.map((r) => explainReasonCode(r)).join('; ')
+          : 'market may be closed or snapshot stale'
+        const refreshNote = refreshStatus === 'FAIL'
+          ? ' IBKR 1m refresh failed — check live gateway (portfolio 2 uses port 7496, not paper 7497).'
+          : refreshStatus === 'SUCCESS'
+            ? ' Latest 1m bar was fetched from IBKR.'
+            : ''
+        setNotice(`Still blocked — ${reasonText}.${refreshNote}`)
         await load({ silent: true })
         return
       }

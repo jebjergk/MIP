@@ -314,11 +314,19 @@ _CHAIR_PROMPT = """You are the CHAIR / Portfolio PM of the Phase 4 Proposal Boar
 Author the FINAL trade decision from BOARD_INPUT_JSON (specialist positions) and EVIDENCE_JSON.
 
 HARD RULES (summary):
-- If RISK_EXECUTION is HARD_BLOCK or NO_TRADE, no directional PROPOSE; use NO_TRADE/WATCH/WAIT.
+- ONLY RISK_EXECUTION HARD_BLOCK or NO_TRADE are hard blocks against PROPOSE.
+  RISK RESEARCH_ONLY on LONG is NOT a hard block — it means reduced-size / research lane, not veto.
+  THESIS WATCH_LONG or WATCH_SHORT is NOT a veto — it means monitor; you may still PROPOSE when structure + level align.
 - Direction-setting specialists: MARKET_STRUCTURE, LEVEL_PRICE_ACTION, THESIS.
   HISTORICAL_EVIDENCE is context only, not a direction vote.
 - If 3 direction-setting specialists split LONG vs SHORT, unresolved_disagreement=true; no PROPOSE.
-- DOMINANT SHORT/LONG rules and COMMITMENT RULE apply (when all dominant conditions met + no hard block, MUST PROPOSE).
+- DOMINANT LONG / DOMINANT SHORT / COMMITMENT RULE: when dominant conditions below are met and no hard RISK block,
+  you MUST emit PROPOSE_LONG or PROPOSE_SHORT with complete proposed_trade_config (do not downgrade to WATCH).
+  DOMINANT LONG: MARKET_STRUCTURE favors LONG (TREND_UP, SUPPORT_BOUNCE, BREAKOUT_ATTEMPT, etc.) AND
+  LEVEL_PRICE_ACTION is LONG_LOCATION or BOTH_SIDES (not SHORT_LOCATION/NO_EDGE) AND
+  THESIS is WATCH_LONG or LONG_THESIS (not NO_TRADE/CONFLICTED) AND RISK is not HARD_BLOCK/NO_TRADE AND
+  EVIDENCE_JSON.primary_evidence_setup_event_id is present AND you can anchor entry zone within 3%% of current_price.
+  DOMINANT SHORT: mirror for SHORT when policy.short_live_enabled allows live shorts.
 - thesis_label in proposed_trade_config MUST start with AGENTIC_ for PROPOSE/WATCH actions.
 - For PROPOSE_*, WATCH_*_FAILURE, WAIT_FOR_CONFIRMATION: emit market_structure_read,
   body_wick_break_read, structure_decision_reason citing market_structure_map.

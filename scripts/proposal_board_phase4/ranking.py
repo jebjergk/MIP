@@ -24,9 +24,9 @@ from .review_eligibility import (
 )
 
 _FRESH_SETUP_STATUSES = frozenset({"ELIGIBLE", "DETECTED", "ACTIVE", "CONFIRMED", "WAITING"})
-
-# Rotation penalty when the symbol was reviewed by the panel in the last N days.
-_RECENTLY_REVIEWED_PENALTY = 30.0
+# Statuses that can anchor chair PROPOSE + publish (matches dossier primary_evidence rule).
+_BOARD_ELIGIBLE_SETUP_STATUSES = frozenset({"DETECTED", "ELIGIBLE", "WAITING", "STALE"})
+_PROPOSAL_READY_TRUST_LABELS = frozenset({"TRUSTED", "PROVISIONAL"})
 
 
 def _count_fresh_eligible_setups(payload: Dict[str, Any], as_of: _date) -> int:
@@ -49,6 +49,67 @@ def _count_fresh_eligible_setups(payload: Dict[str, Any], as_of: _date) -> int:
     return count
 
 
+def _count_board_eligible_setups(payload: Dict[str, Any], as_of: _date) -> int:
+    events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return 0
+    count = 0
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        status = str(ev.get("setup_status") or "").upper()
+        if status not in _BOARD_ELIGIBLE_SETUP_STATUSES:
+            continue
+        sdate = _parse_date(ev.get("setup_date"))
+        if sdate is None:
+            continue
+        age = (as_of - sdate).days
+        if 0 <= age <= 10:
+            count += 1
+    return count
+
+
+def _trust_label_by_family(history: Dict[str, Any]) -> Dict[str, str]:
+    labels: Dict[str, str] = {}
+    if not isinstance(history, dict):
+        return labels
+    for side_key in ("long_history", "short_history"):
+        side = history.get(side_key)
+        if not isinstance(side, list):
+            continue
+        for entry in side:
+            if not isinstance(entry, dict):
+                continue
+            fam = str(entry.get("setup_family") or "").strip().upper()
+            if not fam:
+                continue
+            labels[fam] = str(entry.get("trust_label") or "").strip().upper()
+    return labels
+
+
+def _has_proposal_ready_active_setup(payload: Dict[str, Any], as_of: _date) -> bool:
+    events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return False
+    trust_by_family = _trust_label_by_family(payload.get("history") or {})
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        status = str(ev.get("setup_status") or "").upper()
+        if status not in _BOARD_ELIGIBLE_SETUP_STATUSES:
+            continue
+        sdate = _parse_date(ev.get("setup_date"))
+        if sdate is None:
+            continue
+        age = (as_of - sdate).days
+        if age < 0 or age > 10:
+            continue
+        fam = str(ev.get("setup_family") or "").strip().upper()
+        if trust_by_family.get(fam) in _PROPOSAL_READY_TRUST_LABELS:
+            return True
+    return False
+
+
 def _count_setup_evidence(payload: Dict[str, Any]) -> int:
     events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
     if not isinstance(events, list):
@@ -59,13 +120,11 @@ def _count_setup_evidence(payload: Dict[str, Any]) -> int:
 def score_candidate(
     payload: Dict[str, Any],
     as_of: _date,
-    recently_reviewed: set[str] | None = None,
     *,
     symbol: str = "",
 ) -> Tuple[float, Dict[str, Any]]:
     """Return (appeal_score, breakdown_dict) for one dossier payload."""
     payload = payload if isinstance(payload, dict) else {}
-    recently_reviewed = recently_reviewed or set()
 
     structure = payload.get("structure") or {}
     regime = payload.get("regime") or {}
@@ -82,11 +141,18 @@ def score_candidate(
     strong_trust = _has_strong_structural_trust(history)
     has_history = _has_any_history(history)
     fresh_setups = _count_fresh_eligible_setups(payload, as_of)
+    board_eligible = _count_board_eligible_setups(payload, as_of)
+    proposal_ready_active = _has_proposal_ready_active_setup(payload, as_of)
+    primary_setup_id = payload.get("primary_evidence_setup_event_id")
+    has_primary_setup = primary_setup_id is not None
     n_events = _count_setup_evidence(payload)
 
     score = 0.0
     breakdown: Dict[str, Any] = {
         "fresh_setups_10d": fresh_setups,
+        "board_eligible_setups_10d": board_eligible,
+        "has_primary_setup_event": has_primary_setup,
+        "proposal_ready_active_setup": proposal_ready_active,
         "setup_evidence_count": n_events,
         "nearest_level_distance_pct": nearest_pct,
     }
@@ -99,6 +165,23 @@ def score_candidate(
         if recent_setup_event:
             breakdown["best_setup_status"] = recent_setup_event.get("setup_status")
             breakdown["best_setup_family"] = recent_setup_event.get("setup_family")
+
+    # Board-publishable setup anchor — required for executable PROPOSE.
+    if board_eligible > 0:
+        board_pts = min(75.0, 45.0 + float(max(0, board_eligible - 1)) * 15.0)
+        score += board_pts
+        breakdown["board_eligible_setup_points"] = board_pts
+    elif not has_primary_setup:
+        score -= 50.0
+        breakdown["no_board_eligible_penalty"] = -50.0
+
+    if has_primary_setup:
+        score += 35.0
+        breakdown["primary_setup_event_points"] = 35.0
+
+    if proposal_ready_active:
+        score += 30.0
+        breakdown["proposal_ready_family_points"] = 30.0
 
     # Proximity to key level (closer is better).
     if near_level and nearest_pct is not None:
@@ -128,11 +211,6 @@ def score_candidate(
         score -= 15.0
         breakdown["no_history_penalty"] = -15.0
 
-    sym_u = (symbol or str(payload.get("symbol") or "")).upper()
-    if sym_u and sym_u in recently_reviewed:
-        score -= _RECENTLY_REVIEWED_PENALTY
-        breakdown["recently_reviewed_penalty"] = -_RECENTLY_REVIEWED_PENALTY
-
     # Trust / confidence hints from dossier payload when present.
     conf = _to_float(payload.get("structure_confidence"))
     if conf is not None and conf > 0:
@@ -147,14 +225,11 @@ def score_candidate(
 def rank_eligible_rows(
     rows: List[Tuple[int, str, str, Dict[str, Any]]],
     as_of: _date,
-    recently_reviewed: set[str] | None = None,
 ) -> List[Tuple[int, str, str, Dict[str, Any], float, Dict[str, Any]]]:
-    """Sort eligible dossier rows by descending appeal score."""
+    """Sort eligible dossier rows by descending appeal score (fresh each day)."""
     scored: List[Tuple[int, str, str, Dict[str, Any], float, Dict[str, Any]]] = []
     for did, sym, mkt, payload in rows:
-        pts, breakdown = score_candidate(
-            payload, as_of, recently_reviewed, symbol=sym,
-        )
+        pts, breakdown = score_candidate(payload, as_of, symbol=sym)
         scored.append((did, sym, mkt, payload, pts, breakdown))
     scored.sort(key=lambda r: (-r[4], r[1]))
     return scored

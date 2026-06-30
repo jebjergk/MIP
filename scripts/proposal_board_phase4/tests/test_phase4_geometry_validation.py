@@ -9,6 +9,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from MIP.scripts.proposal_board_phase4.orchestrator import (  # noqa: E402
+    _normalize_chair_parsed,
     _sanitize_evidence_used,
     _validate_chair_trade_geometry,
 )
@@ -57,3 +58,14 @@ def test_propose_long_accepts_zone_near_close():
         "time_horizon": "SWING",
     }
     assert _validate_chair_trade_geometry("PROPOSE_LONG", "LONG", cfg, dossier) is None
+
+
+def test_normalize_chair_backfills_agentic_label_for_watch_long():
+    raw = {
+        "final_action": "WATCH_LONG",
+        "final_direction": "LONG",
+        "primary_reason_code": "CHAIR_WATCH_LONG",
+        "proposed_trade_config": {},
+    }
+    out = _normalize_chair_parsed(raw)
+    assert out["proposed_trade_config"]["thesis_label"] == "AGENTIC_LONG"

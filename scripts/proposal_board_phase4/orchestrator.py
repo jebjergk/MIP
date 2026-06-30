@@ -57,7 +57,6 @@ from dotenv import load_dotenv
 
 from .complete_client import run_complete_json
 from .prompts import (
-    chair_response_format,
     chair_system_prompt,
     chair_user_message,
     specialist_response_format,
@@ -85,7 +84,7 @@ _AGENT_OBJECT_NAMES = {
 _CHAIR_AGENT_NAME = "PHASE4_CHAIR_PORTFOLIO_PM_AGENT"
 _REQUIRED_ROLES = list(_AGENT_OBJECT_NAMES.keys())
 
-_PROMPT_VERSION = "phase4_complete_v2_strict_geometry"
+_PROMPT_VERSION = "phase4_complete_v4_llama_ranked_commit"
 _POLICY_VERSION = "phase4_complete_v2_no_legacy_fallback"
 _MODEL_CONFIG_MODE = "symbol_dossier_ai_complete_bounded"
 
@@ -99,7 +98,7 @@ _DEFAULT_MAX_CANDIDATES: Optional[int] = 20
 _DEFAULT_MAX_LLM_CALLS_PER_RUN = 132  # 20 candidates × 6 AI_COMPLETE calls + headroom
 _DEFAULT_DAILY_RUNS_PER_PORTFOLIO = 1
 _DEFAULT_SPECIALIST_MODEL = "llama3.1-8b"
-_DEFAULT_CHAIR_MODEL = "mistral-large2"
+_DEFAULT_CHAIR_MODEL = "llama3.1-8b"
 _DEFAULT_SPECIALIST_MAX_TOKENS = 2000
 _DEFAULT_CHAIR_MAX_TOKENS = 4000
 _DEFAULT_MAX_EVIDENCE_CHARS = 80_000
@@ -1391,6 +1390,44 @@ def _backfill_chair_from_evidence(
     return out
 
 
+def _normalize_chair_parsed(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Flatten common mistral/llama chair JSON shapes before validation."""
+    if not isinstance(raw, dict):
+        return raw
+    out = dict(raw)
+    scores = out.get("scores")
+    if isinstance(scores, dict):
+        for key in ("confidence", "long_score", "short_score", "no_trade_score"):
+            if out.get(key) is None and scores.get(key) is not None:
+                out[key] = scores[key]
+    ptc_raw = out.get("proposed_trade_config")
+    ptc = dict(ptc_raw) if isinstance(ptc_raw, dict) else {}
+    for key in (
+        "thesis_label", "entry_zone_low", "entry_zone_high", "invalidation_level",
+        "invalidation_rule", "exit_profile", "size_treatment", "risk_class", "time_horizon",
+        "primary_evidence_setup_event_id",
+    ):
+        if ptc.get(key) is None and out.get(key) is not None:
+            ptc[key] = out[key]
+    final_action = str(out.get("final_action") or "").strip().upper()
+    label = str(ptc.get("thesis_label") or "").strip()
+    if final_action in _AGENTIC_THESIS_LABEL_REQUIRED and not label.upper().startswith("AGENTIC_"):
+        ft = str(out.get("final_thesis") or "").strip()
+        if ft.upper().startswith("AGENTIC_"):
+            ptc["thesis_label"] = ft.split()[0][:80]
+        elif final_action in {"PROPOSE_LONG", "WATCH_LONG", "WATCH_LONG_FAILURE"}:
+            ptc["thesis_label"] = "AGENTIC_LONG"
+        elif final_action in {"PROPOSE_SHORT", "WATCH_SHORT", "WATCH_SHORT_FAILURE"}:
+            ptc["thesis_label"] = "AGENTIC_SHORT"
+    out["proposed_trade_config"] = ptc
+    eu = out.get("evidence_used")
+    if isinstance(eu, dict):
+        out["evidence_used"] = [str(k) for k in list(eu.keys())[:12]]
+    elif not isinstance(eu, list):
+        out["evidence_used"] = ["price", "levels"]
+    return out
+
+
 async def _orchestrate_dossier(
     conn_factory,
     runtime_cfg: Phase4RuntimeConfig,
@@ -1507,12 +1544,14 @@ async def _orchestrate_dossier(
     )
 
     await call_budget.consume(1)
+    # Chair uses plain AI_COMPLETE (no response_format). Snowflake structured
+    # JSON mode is unreliable for mistral-large2; Python validators enforce the contract.
     chair_result = await run_complete_json(
         conn_factory,
         model=runtime_cfg.chair_model,
         system_prompt=chair_system_prompt(),
         user_message=chair_msg,
-        response_format=chair_response_format(),
+        response_format=None,
         max_tokens=runtime_cfg.chair_max_tokens,
         statement_timeout_sec=runtime_cfg.statement_timeout_sec,
         max_retries=_COMPLETE_MAX_RETRIES,
@@ -1527,7 +1566,8 @@ async def _orchestrate_dossier(
         "error": chair_result.error,
     }
 
-    chair_parsed = _backfill_chair_from_evidence(chair_result.parsed, dossier_payload)
+    chair_parsed = _normalize_chair_parsed(chair_result.parsed)
+    chair_parsed = _backfill_chair_from_evidence(chair_parsed, dossier_payload)
     chair = _validate_chair(chair_parsed, dossier_payload)
     res.chair = chair
 
@@ -2704,84 +2744,6 @@ def _publish_to_structural(
 # ---------------------------------------------------------------------------
 
 
-_CANDIDATE_ROTATION_LOOKBACK_DAYS = 3
-_FRESH_SETUP_STATUSES = frozenset({"ELIGIBLE", "DETECTED", "ACTIVE", "CONFIRMED", "WAITING"})
-
-
-def _parse_dossier_date(raw: Any) -> Optional[_date]:
-    if raw is None:
-        return None
-    if isinstance(raw, _date):
-        return raw
-    try:
-        return _date.fromisoformat(str(raw)[:10])
-    except (TypeError, ValueError):
-        return None
-
-
-def _count_fresh_eligible_setups(payload: Dict[str, Any], as_of: _date) -> int:
-    """Count recent setup events that qualify as fresh panel candidates."""
-    events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
-    if not isinstance(events, list):
-        return 0
-    count = 0
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        status = str(ev.get("setup_status") or "").upper()
-        if status not in _FRESH_SETUP_STATUSES:
-            continue
-        sdate = _parse_dossier_date(ev.get("setup_date"))
-        if sdate is None:
-            continue
-        age = (as_of - sdate).days
-        if 0 <= age <= 10:
-            count += 1
-    return count
-
-
-def _load_recently_reviewed_symbols(cur, lookback_days: int = _CANDIDATE_ROTATION_LOOKBACK_DAYS) -> set[str]:
-    cur.execute(
-        """
-        SELECT DISTINCT UPPER(v.SYMBOL)
-          FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v
-          JOIN MIP.APP.PROPOSAL_BOARD_RUN r ON r.RUN_ID = v.RUN_ID
-         WHERE r.STARTED_AT >= DATEADD('day', -%(days)s, CURRENT_TIMESTAMP())
-        """,
-        {"days": int(lookback_days)},
-    )
-    return {str(r[0]).upper() for r in (cur.fetchall() or []) if r and r[0]}
-
-
-def _candidate_prerank_key(
-    row: Tuple[int, str, str, Dict[str, Any]],
-    recently_reviewed: set[str],
-    as_of: _date,
-) -> Tuple[int, int, int, int, str]:
-    """Stage 2B rotation + fresh-setup boost before max_candidates cap.
-
-    Priority (ascending sort key — lower wins):
-      1. More fresh ELIGIBLE/DETECTED setups in last 10d (negated)
-      2. Not reviewed in last N days (0 before 1)
-      3. More 30d setup-event evidence (negated)
-      4. Higher dossier_id (negated)
-      5. Symbol alphabetically
-    """
-    did, sym, _mkt, payload = row
-    setup_events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
-    n_events = len(setup_events) if isinstance(setup_events, list) else 0
-    fresh = _count_fresh_eligible_setups(payload if isinstance(payload, dict) else {}, as_of)
-    reviewed_penalty = 1 if sym.upper() in recently_reviewed else 0
-    return (-fresh, reviewed_penalty, -n_events, -did, sym)
-
-
-def _crude_prerank_key(row: Tuple[int, str, str, Dict[str, Any]]) -> Tuple[int, int, int, int, str]:
-    """Backward-compatible alias — rotation disabled (empty recently_reviewed set)."""
-    did, sym, _mkt, payload = row
-    as_of = _date.today()
-    return _candidate_prerank_key(row, set(), as_of)
-
-
 @dataclass
 class BoardRunResult:
     run_id: str
@@ -3187,16 +3149,7 @@ async def orchestrate_phase4_board(
     genuine_eligible_count = len(eligible_rows)
     cost_capped_count = 0
 
-    rotation_cur = conn.cursor()
-    try:
-        recently_reviewed = _load_recently_reviewed_symbols(rotation_cur)
-    finally:
-        try:
-            rotation_cur.close()
-        except Exception:  # noqa: BLE001
-            pass
-
-    scored_rows = rank_eligible_rows(eligible_rows, as_of, recently_reviewed)
+    scored_rows = rank_eligible_rows(eligible_rows, as_of)
     candidate_mode = "SCORE_RANKED" if scored_rows else "UNCAPPED"
     if scored_rows:
         top_preview = [
@@ -3211,12 +3164,6 @@ async def orchestrate_phase4_board(
     eligible_rows = [
         (did, sym, mkt, payload) for did, sym, mkt, payload, _pts, _bd in scored_rows
     ]
-
-    if recently_reviewed:
-        logger.info(
-            "phase4 candidate_rotation run=%s recently_reviewed=%d symbols",
-            run_id, len(recently_reviewed),
-        )
 
     if max_candidates is not None and len(eligible_rows) > max_candidates:
         kept = eligible_rows[:max_candidates]

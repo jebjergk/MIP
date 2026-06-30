@@ -45,6 +45,8 @@ from .shadow_types import (
     parse_chair_ruling,
     parse_specialist_position,
     pick_primary_conflict,
+    specialists_ready_for_plurality_fallback,
+    synthesize_chair_plurality_fallback,
 )
 from .shadow_cortex_client import (
     extract_agent_text,
@@ -812,8 +814,9 @@ async def _run_chair(
     user: str,
     pk_path: str,
     timeout: float,
-) -> Tuple[ShadowChairRuling, int]:
+) -> Tuple[ShadowChairRuling, int, Dict[str, Any]]:
     t0 = time.monotonic()
+    raw_response: Dict[str, Any] = {}
     try:
         logger.info("shadow_stage5: chair agent starting")
         context_msg = _chair_context_message(hearing_id, positions, revisions, conflicts)
@@ -826,21 +829,68 @@ async def _run_chair(
             messages=messages,
             timeout=timeout,
         )
+        raw_response = resp if isinstance(resp, dict) else {}
         raw_text = extract_agent_text(resp)
         ruling = parse_chair_ruling(raw_text)
+
+        if ruling.degraded and not ruling.parse_ok:
+            logger.warning(
+                "shadow_stage5: chair parse failed (%s); retrying JSON-only turn",
+                ruling.degraded_reason,
+            )
+            retry_messages = messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Do not call any tools. Using the specialist positions already "
+                        "provided above, output ONLY the final JSON ruling object now. "
+                        "No markdown fences. No prose."
+                    ),
+                },
+            ]
+            resp_retry = await run_agent_object(
+                account=account,
+                user=user,
+                private_key_path=pk_path,
+                agent_name=_CHAIR_AGENT,
+                messages=retry_messages,
+                timeout=timeout,
+            )
+            raw_response = resp_retry if isinstance(resp_retry, dict) else raw_response
+            ruling_retry = parse_chair_ruling(extract_agent_text(resp_retry))
+            if ruling_retry.parse_ok and not ruling_retry.degraded:
+                ruling = ruling_retry
+
+        if (
+            ruling.degraded
+            and not ruling.parse_ok
+            and specialists_ready_for_plurality_fallback(positions)
+        ):
+            logger.warning(
+                "shadow_stage5: chair still empty after retry; applying specialist plurality fallback"
+            )
+            ruling = synthesize_chair_plurality_fallback(positions, revisions, conflicts)
+
         elapsed = int((time.monotonic() - t0) * 1000)
         logger.info("shadow_stage5: chair done in %dms stance=%s", elapsed, ruling.shadow_stance)
-        return ruling, elapsed
+        return ruling, elapsed, raw_response
     except Exception as exc:
         elapsed = int((time.monotonic() - t0) * 1000)
         logger.warning("shadow_stage5: chair FAILED in %dms: %s: %s", elapsed, type(exc).__name__, exc)
+        if specialists_ready_for_plurality_fallback(positions):
+            logger.warning("shadow_stage5: chair exception; applying specialist plurality fallback")
+            return (
+                synthesize_chair_plurality_fallback(positions, revisions, conflicts),
+                elapsed,
+                raw_response,
+            )
         return ShadowChairRuling(
             shadow_stance="DEFER",
             shadow_confidence=0.0,
             parse_ok=False,
             degraded=True,
             degraded_reason=(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)[:400],
-        ), elapsed
+        ), elapsed, raw_response
 
 
 # ---------------------------------------------------------------------------
@@ -1073,11 +1123,13 @@ def _insert_chair_row_sync(
     hearing_id: str,
     ch: ShadowChairRuling,
     elapsed_ms: int,
+    raw_response: Optional[Dict[str, Any]] = None,
 ) -> None:
     conn = get_connection()
     try:
         cur = conn.cursor()
         trade_json = ch.shadow_trade.model_dump() if ch.shadow_trade else {}
+        raw_json = _jdump(raw_response or {})[:8000]
         cur.execute(
             """
             INSERT INTO MIP.APP.SHADOW_CHAIR_RULING
@@ -1103,7 +1155,7 @@ def _insert_chair_row_sync(
                 _jdump(trade_json),
                 _jdump(ch.top_supports),
                 _jdump(ch.top_tensions),
-                "{}",
+                raw_json,
                 ch.parse_ok, ch.degraded,
                 (ch.degraded_reason or "")[:500],
                 int(elapsed_ms or 0),
@@ -1821,7 +1873,7 @@ async def orchestrate_shadow_board(
         # ------------------------------------------------------------------
         # Stage 5: Chair ruling
         # ------------------------------------------------------------------
-        chair_ruling, chair_elapsed = await _run_chair(
+        chair_ruling, chair_elapsed, chair_raw = await _run_chair(
             hearing_id=hearing_id,
             positions=positions_dict,
             revisions=revisions,
@@ -1838,7 +1890,7 @@ async def orchestrate_shadow_board(
         await _safe_checkpoint(
             "stage5_chair",
             _insert_chair_row_sync,
-            session_id, hearing_id, chair_ruling, chair_elapsed,
+            session_id, hearing_id, chair_ruling, chair_elapsed, chair_raw,
         )
         await _safe_checkpoint("stage5_progress", _checkpoint_session_progress_sync, session_id, 5, "RUNNING")
 

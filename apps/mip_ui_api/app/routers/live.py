@@ -14278,6 +14278,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         # in the verdict.
         agentic_gate_verdict = None
         _exec_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        is_exit = _exec_intent == "EXIT"
         if _exec_intent != "EXIT" and is_structural_live_action(action):
             agentic_gate_verdict = evaluate_authority_gate(conn, action_id)
             if (
@@ -15380,6 +15381,12 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             and not is_exit
         ):
             broker_sl_price = None
+        _portfolio_gateway = _snapshot_sync_params_for_portfolio(action.get("PORTFOLIO_ID"))
+        _exec_gateway_params = {
+            "host": _portfolio_gateway["host"],
+            "port": _portfolio_gateway["port"],
+            "client_id": int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410")),
+        }
         if use_ibkr_submit:
             exit_symbol_qty_before = 0.0
             entry_symbol_qty_before = 0.0
@@ -15401,9 +15408,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "trail_percent": structural_trail_percent,
                 "tif": "DAY",
                 "runtime": {
-                    "host": os.getenv("IBKR_EXEC_HOST", "127.0.0.1"),
-                    "port": int(os.getenv("IBKR_EXEC_PORT", "7497")),
-                    "client_id": int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410")),
+                    **_exec_gateway_params,
                     "connect_timeout_sec": int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12")),
                     "exchange": os.getenv("IBKR_EXEC_EXCHANGE", "SMART"),
                     "currency": os.getenv("IBKR_EXEC_CURRENCY", "USD"),

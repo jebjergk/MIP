@@ -642,3 +642,116 @@ def parse_chair_ruling(raw_text: str) -> ShadowChairRuling:
             degraded=True,
             degraded_reason=f"JSON parse failed: {exc}",
         )
+
+
+def _final_stance_for_role(
+    role: str,
+    pos: Any,
+    revisions: List["RevisionTurn"],
+) -> str:
+    stance = str(getattr(pos, "stance", "DEFER") or "DEFER").upper()
+    rev = next(
+        (r for r in revisions if r.role_name == role and not r.degraded and r.parse_ok),
+        None,
+    )
+    if rev is not None:
+        stance = str(rev.revised_stance or stance).upper()
+    if stance not in ALLOWED_STANCES:
+        stance = "DEFER"
+    return stance
+
+
+def specialists_ready_for_plurality_fallback(positions: Dict[str, Any]) -> bool:
+    """True when every specialist produced a parseable, non-degraded position."""
+    if len(positions) < len(SHADOW_ROLES):
+        return False
+    for role in SHADOW_ROLES:
+        pos = positions.get(role)
+        if pos is None:
+            return False
+        if getattr(pos, "degraded", False):
+            return False
+        if getattr(pos, "parse_ok", True) is False:
+            return False
+        stance = str(getattr(pos, "stance", "") or "").upper()
+        if stance not in ALLOWED_STANCES:
+            return False
+    return True
+
+
+def _plurality_stance_from_counts(counts: Dict[str, int]) -> str:
+    """Pick plurality stance; break ties conservatively (DENY > DEFER > ... > APPROVE)."""
+    if not counts:
+        return "DEFER"
+    max_count = max(counts.values())
+    tied = [stance for stance, count in counts.items() if count == max_count]
+    if len(tied) == 1:
+        return tied[0]
+    for stance in STANCE_ORDER:
+        if stance in tied:
+            return stance
+    return tied[0]
+
+
+def synthesize_chair_plurality_fallback(
+    positions: Dict[str, Any],
+    revisions: List["RevisionTurn"],
+    conflicts: List["ConflictEntry"],
+) -> ShadowChairRuling:
+    """
+    Deterministic chair fallback when SHADOW_CHAIR_AGENT returns no parseable JSON
+    but all specialists produced valid positions.
+    """
+    from collections import Counter
+
+    stance_counts: Counter[str] = Counter()
+    conf_by_stance: Dict[str, List[float]] = {}
+    for role, pos in positions.items():
+        stance = _final_stance_for_role(role, pos, revisions)
+        stance_counts[stance] += 1
+        conf = float(getattr(pos, "confidence", 0.5) or 0.5)
+        conf_by_stance.setdefault(stance, []).append(conf)
+
+    plurality = _plurality_stance_from_counts(dict(stance_counts))
+    confs = conf_by_stance.get(plurality) or [0.5]
+    avg_conf = sum(confs) / len(confs)
+    basis_parts = [f"{stance} x{count}" for stance, count in stance_counts.most_common()]
+    basis = f"Plurality fallback (chair agent returned no JSON): {', '.join(basis_parts)}."
+
+    conflict_note = ""
+    if conflicts:
+        top = pick_primary_conflict(conflicts)
+        if top is not None:
+            conflict_note = (
+                f"Primary conflict {top.role_a}[{top.stance_a}] vs "
+                f"{top.role_b}[{top.stance_b}] ({top.severity}); "
+                "resolved by conservative plurality tie-break."
+            )
+
+    size_posture = "REDUCED" if plurality == "APPROVE_REDUCED" else (
+        "MINIMAL" if plurality in ("WAIT_RECLAIM", "DEFER", "DENY") else "FULL"
+    )
+    exit_profile = "TRAIL_STANDARD" if plurality in ("APPROVE", "APPROVE_REDUCED") else "FIXED_STANDARD"
+    exit_policy = "TRAIL_BRACKET" if exit_profile.startswith("TRAIL_") else "FIXED_BRACKET"
+
+    return ShadowChairRuling(
+        shadow_stance=plurality,
+        shadow_confidence=round(min(max(avg_conf, 0.4), 0.85), 2),
+        plurality_basis=basis[:500],
+        conflict_resolution=conflict_note[:2000],
+        top_supports=[
+            f"{role}: {_final_stance_for_role(role, pos, revisions)}"
+            for role, pos in positions.items()
+        ],
+        top_tensions=[f"{c.role_a} vs {c.role_b} ({c.severity})" for c in conflicts[:3]],
+        shadow_trade=ShadowTradeArtifact(
+            size_posture=size_posture,
+            trail_posture="TIGHT" if plurality == "APPROVE_REDUCED" else "NORMAL",
+            exit_profile=exit_profile,
+            exit_policy=exit_policy,
+            advisory_only=True,
+        ),
+        parse_ok=True,
+        degraded=False,
+        degraded_reason="",
+    )

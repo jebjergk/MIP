@@ -515,10 +515,34 @@ def insert_authority_row_with_supersession(conn, row: Dict[str, Any]) -> str:
     if not action_id:
         raise ValueError("row missing ACTION_ID")
 
+    mode = str(row.get("AUTHORITY_MODE") or "").upper()
     cur = conn.cursor()
     try:
         cur.execute("BEGIN")
-        cur.execute(_SUPERSEDE_SQL, (authority_id, action_id))
+        # AUTO_AUDIT is observational: it must not displace an operator commit
+        # that already unlocked Submit. Failed/re-run shadow sessions were
+        # superseding OPERATOR_COMMITTED rows and leaving the UI on DEFER while
+        # REVALIDATED_PASS could not submit.
+        preserve_operator_latest = False
+        if mode == AUTHORITY_MODE_AUTO_AUDIT:
+            cur.execute(
+                """
+                SELECT 1
+                  FROM MIP.APP.AGENTIC_REVALIDATION_AUTHORITY
+                 WHERE ACTION_ID = %s
+                   AND IS_LATEST = TRUE
+                   AND AUTHORITY_MODE = %s
+                 LIMIT 1
+                """,
+                (action_id, AUTHORITY_MODE_OPERATOR_COMMITTED),
+            )
+            preserve_operator_latest = cur.fetchone() is not None
+            if preserve_operator_latest:
+                row = dict(row)
+                row["IS_LATEST"] = False
+
+        if not preserve_operator_latest:
+            cur.execute(_SUPERSEDE_SQL, (authority_id, action_id))
         cur.execute(
             _INSERT_SQL,
             (

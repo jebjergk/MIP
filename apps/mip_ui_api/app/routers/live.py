@@ -4266,6 +4266,9 @@ def _submit_ibkr_order_bundle(
     trail_amount: float | None = None,
     trail_percent: float | None = None,
     oca_group: str | None = None,
+    ibkr_host: str | None = None,
+    ibkr_port: int | None = None,
+    ibkr_client_id: int | None = None,
 ) -> dict:
     """
     Submit parent + optional TP/SL bundle to IBKR through cursorfiles runtime.
@@ -4279,9 +4282,9 @@ def _submit_ibkr_order_bundle(
             detail="IBKR order runtime not found (cursorfiles venv or place script missing).",
         )
 
-    host = os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
-    port = int(os.getenv("IBKR_EXEC_PORT", "7497"))
-    client_id = int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
+    host = ibkr_host or os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
+    port = int(ibkr_port if ibkr_port is not None else os.getenv("IBKR_EXEC_PORT", "7497"))
+    client_id = int(ibkr_client_id if ibkr_client_id is not None else os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
     connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
     exchange = os.getenv("IBKR_EXEC_EXCHANGE", "SMART")
     currency = os.getenv("IBKR_EXEC_CURRENCY", "USD")
@@ -4352,8 +4355,9 @@ def _submit_ibkr_order_bundle(
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "IBKR order submission failed.",
+                "message": f"IBKR order submission failed (connect {host}:{port}, client {client_id}).",
                 "reason_codes": ["IBKR_SUBMIT_FAILED"],
+                "ibkr_connect": {"host": host, "port": port, "client_id": client_id},
                 "stderr": stderr[-4000:],
                 "stdout": stdout[-4000:],
             },
@@ -4395,6 +4399,9 @@ def _cancel_ibkr_open_orders(
     symbol: str | None = None,
     broker_order_id: str | None = None,
     dry_run: bool = False,
+    ibkr_host: str | None = None,
+    ibkr_port: int | None = None,
+    ibkr_client_id: int | None = None,
 ) -> dict:
     """
     Cancel open/pending IBKR orders for an account (optionally symbol-scoped).
@@ -4408,9 +4415,9 @@ def _cancel_ibkr_open_orders(
             detail="IBKR cancel runtime not found (cursorfiles venv or cancel script missing).",
         )
 
-    host = os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
-    port = int(os.getenv("IBKR_EXEC_PORT", "7497"))
-    client_id = int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
+    host = ibkr_host or os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
+    port = int(ibkr_port if ibkr_port is not None else os.getenv("IBKR_EXEC_PORT", "7497"))
+    client_id = int(ibkr_client_id if ibkr_client_id is not None else os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
     connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
 
     cmd = [
@@ -15423,6 +15430,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     pre_exit_cancel_result = _cancel_ibkr_open_orders(
                         account=str(account_id),
                         symbol=str(action.get("SYMBOL")),
+                        ibkr_host=_exec_gateway_params["host"],
+                        ibkr_port=_exec_gateway_params["port"],
+                        ibkr_client_id=_exec_gateway_params["client_id"],
                     )
                 except Exception as cancel_exc:
                     pre_exit_cancel_result = {"warning": f"Pre-exit bracket cancel failed (non-fatal): {cancel_exc}"}
@@ -15556,6 +15566,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     trail_amount=structural_trail_amount,
                     trail_percent=structural_trail_percent,
                     oca_group=structural_oca_group,
+                    ibkr_host=_exec_gateway_params["host"],
+                    ibkr_port=_exec_gateway_params["port"],
+                    ibkr_client_id=_exec_gateway_params["client_id"],
                 )
             except HTTPException as exc:
                 cur.execute(

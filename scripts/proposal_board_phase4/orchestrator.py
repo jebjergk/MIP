@@ -665,6 +665,46 @@ def _persist_eligibility(
     )
 
 
+def _patch_eligibility_prescreen(
+    cur,
+    run_id: str,
+    symbol: str,
+    breakdown: Dict[str, Any],
+    *,
+    prescreen_rank: int,
+    eligible: Optional[bool] = None,
+    primary_reason_code: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> None:
+    """Merge prescreen scores into the existing eligibility audit row."""
+    summary = dict(breakdown or {})
+    summary["prescreen_rank"] = prescreen_rank
+    sets = ["EVIDENCE_SUMMARY_JSON = PARSE_JSON(%(summary)s)"]
+    params: Dict[str, Any] = {
+        "run_id": run_id,
+        "sym": (symbol or "")[:20],
+        "summary": _jdump(summary),
+    }
+    if eligible is not None:
+        sets.append("ELIGIBLE = %(elig)s")
+        params["elig"] = bool(eligible)
+    if primary_reason_code:
+        sets.append("PRIMARY_REASON_CODE = %(primary)s")
+        params["primary"] = primary_reason_code[:80]
+    if notes is not None:
+        sets.append("NOTES = %(notes)s")
+        params["notes"] = _truncate(notes, 2000)
+    cur.execute(
+        f"""
+        UPDATE MIP.APP.PROPOSAL_BOARD_REVIEW_ELIGIBILITY
+           SET {", ".join(sets)}
+         WHERE RUN_ID = %(run_id)s
+           AND SYMBOL = %(sym)s
+        """,
+        params,
+    )
+
+
 # ---------------------------------------------------------------------------
 # IBKR account-mode helper (short-publication safety gate)
 # ---------------------------------------------------------------------------
@@ -3153,13 +3193,36 @@ async def orchestrate_phase4_board(
     candidate_mode = "SCORE_RANKED" if scored_rows else "UNCAPPED"
     if scored_rows:
         top_preview = [
-            f"{sym}({breakdown.get('prescreen_score', pts):.1f})"
+            (
+                f"{sym}(rank={breakdown.get('combined_rank_score', pts):.0f}"
+                f"/exec={breakdown.get('execution_readiness_score', 0):.0f})"
+            )
             for _did, sym, _mkt, _pl, pts, breakdown in scored_rows[:10]
         ]
         logger.info(
             "phase4 prescreen_score run=%s eligible=%d top10=%s",
             run_id, len(scored_rows), top_preview,
         )
+
+    prescreen_cur = conn.cursor()
+    try:
+        for rank_idx, (_did, sym, _mkt, _payload, _pts, breakdown) in enumerate(scored_rows, 1):
+            try:
+                _patch_eligibility_prescreen(
+                    prescreen_cur, run_id, sym, breakdown,
+                    prescreen_rank=rank_idx,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "phase4 prescreen patch failed run=%s symbol=%s: %s",
+                    run_id, sym, e,
+                )
+        conn.commit()
+    finally:
+        try:
+            prescreen_cur.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     eligible_rows = [
         (did, sym, mkt, payload) for did, sym, mkt, payload, _pts, _bd in scored_rows
@@ -3181,24 +3244,28 @@ async def orchestrate_phase4_board(
 
         cap_elig_cur = conn.cursor()
         try:
-            for did, sym, mkt, _payload in skipped_cap:
+            cap_rank_start = max_candidates + 1
+            for cap_offset, (did, sym, mkt, _payload) in enumerate(skipped_cap):
                 skip_counts["NOT_SENT_TO_AGENT_PANEL_COST_CAP"] = (
                     skip_counts.get("NOT_SENT_TO_AGENT_PANEL_COST_CAP", 0) + 1
                 )
+                cap_bd = next(
+                    (bd for d, s, _m, _p, _pt, bd in scored_rows if d == did and s == sym),
+                    {},
+                )
                 try:
-                    _persist_eligibility(
-                        cap_elig_cur, run_id, as_of, portfolio_id, did,
-                        EligibilityDecision(
-                            symbol=sym,
-                            market_type=mkt,
-                            eligible=False,
-                            primary_reason_code="NOT_SENT_TO_AGENT_PANEL_COST_CAP",
-                            signal_flags={"temp_cap_order": True},
-                            evidence_summary={"note": "skipped by max_candidates cap; not a quality rejection"},
-                        ),
+                    _patch_eligibility_prescreen(
+                        cap_elig_cur, run_id, sym, cap_bd,
+                        prescreen_rank=cap_rank_start + cap_offset,
+                        eligible=False,
+                        primary_reason_code="NOT_SENT_TO_AGENT_PANEL_COST_CAP",
+                        notes="Skipped by max_candidates cap after execution-readiness ranking.",
                     )
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "phase4 cost_cap patch failed run=%s symbol=%s: %s",
+                        run_id, sym, e,
+                    )
             conn.commit()
         finally:
             try:

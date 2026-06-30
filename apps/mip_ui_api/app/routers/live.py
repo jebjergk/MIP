@@ -2794,7 +2794,7 @@ def _seed_executable_bracket_from_joint_decision(
     Trailing-stop entries still require executable TP/SL percentages for IB
     bracket construction and LPA submit gating. Qty sizing may happen later.
     """
-    target_return, stop_loss_pct, _src = _live_target_and_stop_from_joint_decision(
+    target_return, stop_loss_pct = _live_target_and_stop_from_joint_decision(
         joint_decision, bust_pct_default
     )
     if (

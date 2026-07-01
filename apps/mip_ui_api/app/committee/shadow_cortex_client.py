@@ -275,6 +275,8 @@ def extract_agent_text(response: Dict[str, Any]) -> str:
       { "messages": [ { "role":"assistant", "content":[...] } ] }
       { "choices": [ { "message": { "content":"..." } } ] }
     """
+    if not response or not isinstance(response, dict):
+        return ""
     # 1) Primary: top-level role+content (current non-streaming shape)
     if response.get("role") == "assistant":
         text = _extract_text_from_content_blocks(response.get("content"))

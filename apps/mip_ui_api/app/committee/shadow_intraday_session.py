@@ -111,7 +111,7 @@ def fetch_rth_15m_bars(symbol: str, market_type: str | None = None) -> List[Dict
             [{"symbol": sym, "market_type": "STOCK"}],
             interval_minutes=_INTERVAL_MIN,
             window_bars=32,
-            timeout_sec=60,
+            timeout_sec=35,
             diagnostics_surface="shadow_intraday_session",
             regular_trading_hours_only=True,
         )

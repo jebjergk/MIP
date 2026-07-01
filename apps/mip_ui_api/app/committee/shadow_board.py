@@ -37,6 +37,7 @@ from .shadow_types import (
     ConflictEntry,
     DegradedPosition,
     RevisionTurn,
+    ROLE_SLICE_MAP,
     ShadowBoardResult,
     ShadowChairRuling,
     ShadowEvidencePack,
@@ -632,6 +633,88 @@ def _specialist_parse_failed(position: SpecialistPosition | DegradedPosition) ->
     return isinstance(position, DegradedPosition) or bool(getattr(position, "degraded", False))
 
 
+def _bundle_role_evidence(pack_slices: Dict[str, Any], role: str) -> Dict[str, Any]:
+    allowed = ROLE_SLICE_MAP.get(role.upper(), set())
+    return {k: pack_slices[k] for k in allowed if k in pack_slices}
+
+
+def _specialist_user_message(
+    hearing_id: str,
+    role: str,
+    pack_slices: Optional[Dict[str, Any]] = None,
+) -> str:
+    lines = [
+        f"Hearing ID: {hearing_id}",
+        f"You are the {role} specialist. Call get_evidence_slice to retrieve your evidence "
+        f"slices, then form your position and return the JSON object as instructed.",
+    ]
+    intra = (pack_slices or {}).get("intraday_session_picture") or {}
+    if (
+        intra.get("session_available")
+        and "intraday_session_picture" in ROLE_SLICE_MAP.get(role.upper(), set())
+    ):
+        lines.append(
+            "RTH intraday summary (also in intraday_session_picture slice): "
+            f"{intra.get('operator_line') or intra.get('headline') or 'n/a'}"
+        )
+        vs = intra.get("vs_overnight_dossier") or {}
+        lines.append(
+            f"verdict_bucket={intra.get('verdict_bucket')}; "
+            f"overnight_flags_still_binding={vs.get('overnight_flags_still_binding')}"
+        )
+    return "\n".join(lines)
+
+
+_SPECIALIST_OBJECTLESS_SYSTEM = (
+    "You are a Shadow Investment Committee specialist. "
+    "Evidence is pre-loaded in the user message — do not request more data. "
+    "Return ONLY a JSON object with keys: role, stance, confidence, rationale, evidence_used. "
+    "stance must be one of: APPROVE, APPROVE_REDUCED, WAIT_RECLAIM, DEFER, DENY. "
+    "confidence is a float 0.0-1.0. No markdown fences. No prose outside JSON."
+)
+
+
+async def _run_specialist_objectless_fallback(
+    role: str,
+    hearing_id: str,
+    evidence: Dict[str, Any],
+    account: str,
+    user: str,
+    pk_path: str,
+    timeout: float,
+) -> SpecialistPosition | DegradedPosition:
+    """Second attempt without tools — avoids empty responses after tool-loop exhaustion."""
+    try:
+        blob = json.dumps(evidence, sort_keys=True, default=str)
+        if len(blob) > 14000:
+            blob = blob[:14000] + "...(truncated)"
+        user_message = (
+            f"Hearing ID: {hearing_id}\n"
+            f"Role: {role}\n\n"
+            f"PRE-LOADED EVIDENCE JSON:\n{blob}\n\n"
+            "Output your specialist position JSON now."
+        )
+        resp = await run_agent_objectless(
+            account=account,
+            user=user,
+            private_key_path=pk_path,
+            model=_OBJECTLESS_MODEL,
+            system_prompt=_SPECIALIST_OBJECTLESS_SYSTEM.replace(
+                "specialist", f"{role} specialist", 1
+            ),
+            user_message=user_message,
+            timeout=min(timeout, 90.0),
+        )
+        return parse_specialist_position(extract_agent_text(resp), role)
+    except Exception as exc:
+        logger.warning("shadow_stage1: %s objectless fallback failed: %s", role, exc)
+        return DegradedPosition(
+            role=role,
+            degraded=True,
+            degraded_reason=f"objectless fallback: {exc}"[:400],
+        )
+
+
 async def _run_specialist(
     role: str,
     agent_name: str,
@@ -640,6 +723,7 @@ async def _run_specialist(
     user: str,
     pk_path: str,
     timeout: float,
+    pack_slices: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, SpecialistPosition | DegradedPosition, int]:
     """Run one specialist agent; return (role, position, elapsed_ms)."""
     t0 = time.monotonic()
@@ -648,11 +732,7 @@ async def _run_specialist(
         messages = [
             {
                 "role": "user",
-                "content": (
-                    f"Hearing ID: {hearing_id}\n"
-                    f"You are the {role} specialist. Call get_evidence_slice to retrieve your evidence "
-                    f"slices, then form your position and return the JSON object as instructed."
-                ),
+                "content": _specialist_user_message(hearing_id, role, pack_slices),
             }
         ]
         resp: Dict[str, Any] = {}
@@ -662,37 +742,32 @@ async def _run_specialist(
             degraded_reason="no agent attempt",
         )
         for attempt in range(1, _SPECIALIST_AGENT_MAX_ATTEMPTS + 1):
-            resp = await run_agent_object(
-                account=account,
-                user=user,
-                private_key_path=pk_path,
-                agent_name=agent_name,
-                messages=messages,
-                timeout=timeout,
-            )
-            position = parse_specialist_position(extract_agent_text(resp), role)
-            if not _specialist_parse_failed(position):
-                break
-            if attempt < _SPECIALIST_AGENT_MAX_ATTEMPTS:
+            if attempt == 1:
+                resp = await run_agent_object(
+                    account=account,
+                    user=user,
+                    private_key_path=pk_path,
+                    agent_name=agent_name,
+                    messages=messages,
+                    timeout=timeout,
+                )
+                position = parse_specialist_position(extract_agent_text(resp), role)
+            else:
+                evidence = _bundle_role_evidence(pack_slices or {}, role)
                 logger.warning(
-                    "shadow_stage1: %s parse failed on attempt %d/%d (%s); JSON-only retry",
+                    "shadow_stage1: %s attempt %d/%d failed (%s); objectless fallback with %d slices",
                     role,
                     attempt,
                     _SPECIALIST_AGENT_MAX_ATTEMPTS,
                     getattr(position, "degraded_reason", "empty response"),
+                    len(evidence),
                 )
-                messages = messages + [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Do not call any tools. Using the evidence you already retrieved, "
-                            "output ONLY your specialist position JSON object now. "
-                            "Required keys: role, stance, confidence, rationale, evidence_used. "
-                            "No markdown fences. No prose."
-                        ),
-                    },
-                ]
-            else:
+                position = await _run_specialist_objectless_fallback(
+                    role, hearing_id, evidence, account, user, pk_path, timeout,
+                )
+            if not _specialist_parse_failed(position):
+                break
+            if attempt >= _SPECIALIST_AGENT_MAX_ATTEMPTS:
                 logger.warning(
                     "shadow_stage1: %s still failed after %d attempts; leaving degraded",
                     role,
@@ -1901,6 +1976,7 @@ async def orchestrate_shadow_board(
                 user=user,
                 pk_path=pk_path,
                 timeout=timeout_sec,
+                pack_slices=pack.slices,
             ))
             for role, agent_name in _SPECIALIST_AGENTS.items()
         ]

@@ -56,15 +56,20 @@ function coerceConfidence(v) {
 export function normalizeShadowBoardResponse(json) {
   if (!json || typeof json !== 'object') return emptyNormalized(json)
 
-  const chair = json.chair && typeof json.chair === 'object' ? json.chair : null
-
   const statusRaw = String(json.status ?? '').toUpperCase()
   const status = KNOWN_STATUSES.has(statusRaw) ? statusRaw : (statusRaw || 'UNAVAILABLE')
+  const isRunning = status === 'RUNNING'
 
-  const stanceRaw = json.shadow_stance ?? chair?.shadow_stance ?? null
+  const chair = json.chair && typeof json.chair === 'object' ? json.chair : null
+
+  const stanceRaw = isRunning
+    ? (json.shadow_stance ?? null)
+    : (json.shadow_stance ?? chair?.shadow_stance ?? null)
   const stance = stanceRaw && typeof stanceRaw === 'string' ? stanceRaw.toUpperCase() : null
 
-  const confidence = coerceConfidence(json.shadow_confidence ?? chair?.shadow_confidence)
+  const confidence = isRunning
+    ? coerceConfidence(json.shadow_confidence)
+    : coerceConfidence(json.shadow_confidence ?? chair?.shadow_confidence)
 
   // Optional Phase 4-style chair fields. Not in today's shadow chair JSON
   // schema but exposed in the normalizer so any future enrichment of
@@ -87,7 +92,7 @@ export function normalizeShadowBoardResponse(json) {
     degradedReason,
     sessionId: json.session_id ?? null,
     hearingId: json.hearing_id ?? null,
-    chair,
+    chair: isRunning ? null : chair,
     raw: json,
   }
 }

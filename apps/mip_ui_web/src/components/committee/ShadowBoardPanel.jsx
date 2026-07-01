@@ -823,6 +823,8 @@ export default function ShadowBoardPanel({
   const isDegraded = Boolean(shadowPayload?.degraded)
   const isRunning = String(status || '').toUpperCase() === 'RUNNING'
   const isComplete = String(status || '').toUpperCase() === 'COMPLETE'
+  const isTerminal = isComplete || ['DEGRADED', 'FAILED'].includes(String(status || '').toUpperCase())
+  const displayChair = isRunning ? null : chair
   const stageReached = runningProgress?.stage_reached ?? shadowPayload?.stage_reached ?? 0
   const stageKey = STAGE_LABELS[Math.max(0, Math.min(STAGE_LABELS.length - 1, stageReached))]?.key
   const effectiveSessionId = shadowPayload?.session_id || runningProgress?.session_id
@@ -913,8 +915,8 @@ export default function ShadowBoardPanel({
         )}
       </div>
 
-      {/* Final verdict ribbon — only after chair has ruled */}
-      {(isComplete || (chair && shadowPayload?.shadow_stance)) && (
+      {/* Final verdict ribbon — only after the session has sealed */}
+      {isTerminal && shadowPayload?.shadow_stance && (
         <VerdictRibbon
           stance={shadowPayload?.shadow_stance}
           confidence={shadowPayload?.shadow_confidence}
@@ -923,10 +925,10 @@ export default function ShadowBoardPanel({
         />
       )}
 
-      {isComplete && chair && !showFullTranscript ? (
+      {isTerminal && !showFullTranscript ? (
         <>
           <OutcomeSummary
-            chair={chair}
+            chair={displayChair}
             shadowStance={shadowPayload?.shadow_stance}
             shadowConfidence={shadowPayload?.shadow_confidence}
           />
@@ -962,7 +964,7 @@ export default function ShadowBoardPanel({
           isRunning={isRunning}
           chatSignals={[
             timeline.length,
-            chair ? 1 : 0,
+            displayChair ? 1 : 0,
             isRunning ? stageReached : -1,
           ]}
         >
@@ -1020,10 +1022,10 @@ export default function ShadowBoardPanel({
                 return null
               })}
 
-              {/* Chair finale — always last */}
-              {chair && (
+              {/* Chair finale — only after session has sealed, never mid-run */}
+              {displayChair && (
                 <ChairBubble
-                  chair={chair}
+                  chair={displayChair}
                   shadowStance={shadowPayload.shadow_stance}
                   shadowConfidence={shadowPayload.shadow_confidence}
                   totalSpecialists={positions.length}

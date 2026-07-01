@@ -717,15 +717,33 @@ export default function LivePortfolioActivity() {
             const stillPolling = !terminal && ctx.attempts < MAX_ATTEMPTS
             setShadowBoardByAction((prev) => {
               const cur = prev[actionId] || {}
-              // Never downgrade a stance/confidence we already have. The
-              // session may briefly omit them on intermediate fetches; we
-              // want the headline to remain stable once a verdict shows.
-              const nextStance =
-                normalized.stance != null && normalized.stance !== ''
-                  ? normalized.stance
-                  : cur.stance
-              const nextConfidence =
-                normalized.confidence != null ? normalized.confidence : cur.confidence
+              const sessionChanged = Boolean(
+                normalized.sessionId
+                && cur.sessionId
+                && normalized.sessionId !== cur.sessionId,
+              )
+              const freshRun = sessionChanged || (
+                String(normalized.status || '').toUpperCase() === 'RUNNING'
+                && !isShadowStatusTerminal(cur.status)
+                && ctx.attempts <= 1
+              )
+              // Never downgrade a stance/confidence we already have on the
+              // same sealed session. Do NOT carry a prior session's verdict
+              // into a new RUNNING review.
+              const nextStance = freshRun
+                ? (normalized.stance ?? null)
+                : (
+                  normalized.stance != null && normalized.stance !== ''
+                    ? normalized.stance
+                    : cur.stance
+                )
+              const nextConfidence = freshRun
+                ? (normalized.confidence ?? null)
+                : (
+                  normalized.confidence != null
+                    ? normalized.confidence
+                    : cur.confidence
+                )
               // Once terminal is observed, lock it in — later fetches that
               // happen to return a non-terminal status (rare; would only
               // occur on a race) must not overwrite it.
@@ -744,6 +762,8 @@ export default function LivePortfolioActivity() {
                   polling: stillPolling,
                   error: null,
                   attempts: ctx.attempts,
+                  chair: freshRun ? null : (normalized.chair ?? cur.chair ?? null),
+                  raw: normalized.raw ?? cur.raw ?? null,
                 },
               }
             })
@@ -806,10 +826,19 @@ export default function LivePortfolioActivity() {
       // without stance even though we already saw COMPLETE with a stance.
       // Without this guard the Shadow Chair Verdict headline visibly
       // "disappears" / drops back to placeholder after showing the verdict.
+      const newSession = Boolean(
+        normalized.sessionId
+        && cur.sessionId
+        && normalized.sessionId !== cur.sessionId,
+      )
       const preserveStance =
-        cur.stance != null && (normalized.stance == null || normalized.stance === '')
+        !newSession
+        && cur.stance != null
+        && (normalized.stance == null || normalized.stance === '')
       const preserveConfidence =
-        cur.confidence != null && (normalized.confidence == null)
+        !newSession
+        && cur.confidence != null
+        && (normalized.confidence == null)
       return {
         ...prev,
         [actionId]: {
@@ -817,6 +846,7 @@ export default function LivePortfolioActivity() {
           ...normalized,
           stance: preserveStance ? cur.stance : normalized.stance,
           confidence: preserveConfidence ? cur.confidence : normalized.confidence,
+          chair: newSession ? null : (normalized.chair ?? cur.chair ?? null),
           // If we already saw a terminal status, keep it. Otherwise take what
           // the exhibits push tells us.
           status: isShadowStatusTerminal(cur.status) ? cur.status : normalized.status,
@@ -1392,6 +1422,25 @@ export default function LivePortfolioActivity() {
       if (mode !== 'OPERATOR_COMMITTED' || auth.IS_STALE) return
       if (!LPA_POSITIVE_AUTHORITY.has(authorityStatus)) return
       const actionStatus = String(d.status || '').toUpperCase()
+      const needsApprovalChain = [
+        'READY_FOR_APPROVAL_FLOW',
+        'PM_ACCEPTED',
+        'COMPLIANCE_APPROVED',
+        'INTENT_SUBMITTED',
+      ].includes(actionStatus)
+      if (needsApprovalChain) {
+        const chainKey = `${d.action_id}:approve:${auth.AUTHORITY_ID || authorityStatus}`
+        if (autoPriceCheckDoneRef.current[chainKey]) return
+        autoPriceCheckDoneRef.current[chainKey] = true
+        void advanceLiveActionAfterCommitteeApply(
+          d.action_id,
+          { action_status: actionStatus },
+          { isStructuralC20Flow: true },
+        ).catch(() => {
+          delete autoPriceCheckDoneRef.current[chainKey]
+        })
+        return
+      }
       if (!['INTENT_APPROVED', 'REVALIDATED_FAIL'].includes(actionStatus)) return
       const shadow = shadowBoardByAction[d.action_id]
       const key = `${d.action_id}:${shadow?.sessionId || auth.SHADOW_SESSION_ID || ''}`
@@ -1399,7 +1448,7 @@ export default function LivePortfolioActivity() {
       autoPriceCheckDoneRef.current[key] = true
       void runRevalidateForSubmit(d.action_id)
     })
-  }, [overview, agenticAuthorityByAction, shadowBoardByAction, runRevalidateForSubmit])
+  }, [overview, agenticAuthorityByAction, shadowBoardByAction, runRevalidateForSubmit, advanceLiveActionAfterCommitteeApply])
 
   const submitOnly = useCallback(async (actionId) => {
     // Phase 3A: real-money confirmation gate (temporary UI guard).
@@ -1969,6 +2018,10 @@ export default function LivePortfolioActivity() {
                         && String(d.proposal_freshness).toUpperCase() !== 'CURRENT'
                       )
                       const canRunRevalidateForSubmit = !proposalIsStale && [
+                        'READY_FOR_APPROVAL_FLOW',
+                        'PM_ACCEPTED',
+                        'COMPLIANCE_APPROVED',
+                        'INTENT_SUBMITTED',
                         'INTENT_APPROVED',
                         'REVALIDATED_FAIL',
                       ].includes(statusUpper)

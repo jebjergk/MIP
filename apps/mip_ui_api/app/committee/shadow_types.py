@@ -27,9 +27,8 @@ SHADOW_ROLES = (
 )
 
 # Role → allowed slice names (closed-world; mirrors GET_SHADOW_EVIDENCE_SLICE)
-# Phase 4 slices (phase4_thesis_verdict, phase4_dossier_context) are added for
-# roles that benefit from Phase 4 proposal-board intelligence. They are
-# null-safe: when no Phase 4 lineage exists the slice carries phase4_available=False.
+# Phase 4 slices (phase4_thesis_verdict, phase4_dossier_context) are structural
+# prior from proposal night. intraday_session_picture is live RTH substantiation.
 ROLE_SLICE_MAP: Dict[str, set] = {
     "STRUCTURAL_THESIS": {
         "proposal_meta", "structural_state", "thesis_summary",
@@ -37,15 +36,16 @@ ROLE_SLICE_MAP: Dict[str, set] = {
     },
     "ENTRY_GEOMETRY": {
         "proposal_meta", "entry_zone", "live_price",
-        "phase4_dossier_context",
+        "phase4_dossier_context", "intraday_session_picture",
     },
     "REGIME": {
         "proposal_meta", "regime_state", "live_bars",
-        "phase4_dossier_context",
+        "phase4_dossier_context", "intraday_session_picture",
     },
     "PATH_TRADEABILITY": {
         "proposal_meta", "path_metrics", "mfe_mae",
         "phase4_thesis_verdict", "phase4_dossier_context",
+        "intraday_session_picture",
     },
     "PROTECTION_EXIT": {
         "proposal_meta", "invalidation", "live_price",
@@ -53,7 +53,7 @@ ROLE_SLICE_MAP: Dict[str, set] = {
     },
     "SYMBOL_BEHAVIOR": {
         "proposal_meta", "trust_label", "path_metrics", "live_bars",
-        "phase4_dossier_context",
+        "phase4_dossier_context", "intraday_session_picture",
     },
     "SHADOW_CHAIR": {
         "proposal_meta", "structural_state", "thesis_summary",
@@ -61,6 +61,7 @@ ROLE_SLICE_MAP: Dict[str, set] = {
         "path_metrics", "mfe_mae", "invalidation", "trust_label",
         "deltas_summary", "artifacts_summary",
         "phase4_thesis_verdict", "phase4_dossier_context",
+        "intraday_session_picture",
     },
 }
 
@@ -84,7 +85,7 @@ class ShadowEvidencePack(BaseModel):
     """
     hearing_id: str
     proposal_id: int
-    pack_version: str = "2.0.0"
+    pack_version: str = "2.1.0"
 
     # Pre-computed slices — keyed by slice_name, consumed by GET_SHADOW_EVIDENCE_SLICE
     slices: Dict[str, Any] = Field(default_factory=dict)
@@ -309,6 +310,7 @@ def build_shadow_evidence_pack(
     artifacts: List[Dict[str, Any]],
     phase4_thesis: Optional[Dict[str, Any]] = None,
     phase4_dossier: Optional[Dict[str, Any]] = None,
+    intraday_session_picture: Optional[Dict[str, Any]] = None,
 ) -> ShadowEvidencePack:
     """
     Build the ShadowEvidencePack from Committee 2.0 DB rows.
@@ -545,6 +547,8 @@ def build_shadow_evidence_pack(
 
     slices["phase4_dossier_context"] = {
         "phase4_available": _p4d_available,
+        "temporal_authority": "STRUCTURAL_PRIOR",
+        "as_of": "proposal_night",
         "continuation_quality":              act_ctx.get("continuation_quality"),
         "resistance_overhead_risk":          act_ctx.get("resistance_overhead_risk"),
         "broken_resistance_support_confidence": act_ctx.get("broken_resistance_support_confidence"),
@@ -558,6 +562,13 @@ def build_shadow_evidence_pack(
         "structural_timeline_summary":       timeline,
         "levels":                            levels,
         "actionability_context":             act_ctx,
+    }
+
+    slices["intraday_session_picture"] = intraday_session_picture or {
+        "session_available": False,
+        "temporal_authority": "EXECUTION_SUBSTANTIATION",
+        "reason": "NOT_COMPUTED",
+        "operator_line": "Intraday session picture was not computed for this run.",
     }
 
     return ShadowEvidencePack(

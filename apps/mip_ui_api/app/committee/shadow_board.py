@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.config import get_snowflake_config
 from app.db import fetch_all, get_connection
 
+from .shadow_intraday_session import build_shadow_intraday_session_picture
 from .shadow_types import (
     ChallengeTurn,
     ConflictEntry,
@@ -72,7 +73,12 @@ _CHAIR_AGENT = "SHADOW_CHAIR_AGENT"
 _OBJECTLESS_MODEL = "claude-haiku-4-5"
 _AGENT_MODEL = "claude-haiku-4-5"  # Baked into all SHADOW_*_AGENT specs; mirrored here so SHADOW_BOARD_SESSION.AGENT_MODEL is recorded explicitly instead of relying on the (stale) column default.
 _CACHE_TTL_HOURS = 24
-
+# Hard caps on Cortex agent invocations per role per session (no loops).
+_SPECIALIST_AGENT_MAX_ATTEMPTS = 2
+_CHAIR_AGENT_MAX_ATTEMPTS = 2
+# RUNNING rows older than this (or with COMPLETED_AT set) are reaped as FAILED
+# so LPA never spins on a dead background task or API restart mid-run.
+_STALE_RUNNING_SECONDS = 300.0
 
 # ---------------------------------------------------------------------------
 # Helpers: Snowflake JSON persistence (sync, run via asyncio.to_thread)
@@ -80,6 +86,20 @@ _CACHE_TTL_HOURS = 24
 
 def _jdump(obj: Any) -> str:
     return json.dumps(obj, default=str)
+
+
+def _chair_raw_json_for_persist(raw_response: Optional[Dict[str, Any]]) -> str:
+    """Persist chair RAW_RESPONSE as valid JSON (never truncate mid-object)."""
+    if not raw_response:
+        return "{}"
+    try:
+        text = _jdump(raw_response)
+    except Exception:
+        return "{}"
+    if len(text) <= 8000:
+        return text
+    # Truncating serialized JSON breaks PARSE_JSON in Snowflake; store stub instead.
+    return _jdump({"truncated": True, "original_bytes": len(text)})
 
 
 def _get_snowflake_creds() -> Tuple[str, str, str]:
@@ -196,6 +216,69 @@ def compute_evidence_pack_hash(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def _running_session_is_stale(row: Dict[str, Any], *, max_age_sec: float = _STALE_RUNNING_SECONDS) -> bool:
+    """True when a RUNNING row is a zombie (cancelled task, API restart, etc.)."""
+    if str(row.get("STATUS") or "").upper() != "RUNNING":
+        return False
+    if row.get("COMPLETED_AT") is not None:
+        return True
+    created = row.get("CREATED_AT")
+    if created is None:
+        return False
+    try:
+        if hasattr(created, "timestamp"):
+            age_sec = time.time() - created.timestamp()
+        else:
+            from datetime import datetime
+            if isinstance(created, str):
+                created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            else:
+                created_dt = created
+            age_sec = (datetime.now(created_dt.tzinfo) - created_dt).total_seconds()
+    except Exception:
+        return False
+    return age_sec > max_age_sec
+
+
+def _reap_stale_running_session_sync(session_id: str, *, reason: str = "STALE_RUNNING_REAPED") -> bool:
+    """Mark one zombie RUNNING session FAILED. Returns True if updated."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE MIP.APP.SHADOW_BOARD_SESSION
+               SET STATUS = 'FAILED',
+                   DEGRADED = TRUE,
+                   DEGRADED_REASON = %(reason)s,
+                   COMPLETED_AT = COALESCE(COMPLETED_AT, CURRENT_TIMESTAMP()),
+                   RUN_MS = COALESCE(
+                       RUN_MS,
+                       DATEDIFF('millisecond', CREATED_AT, CURRENT_TIMESTAMP())
+                   )
+             WHERE SESSION_ID = %(sid)s
+               AND STATUS = 'RUNNING'
+            """,
+            {"sid": session_id, "reason": reason[:500]},
+        )
+        return int(getattr(cur, "rowcount", 0) or 0) > 0
+    finally:
+        conn.close()
+
+
+def _maybe_reap_running_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reap a stale RUNNING session in-place; return None if it was reaped."""
+    if not row:
+        return row
+    if not _running_session_is_stale(row):
+        return row
+    sid = str(row.get("SESSION_ID") or "")
+    if sid and _reap_stale_running_session_sync(sid):
+        logger.warning("shadow_board: reaped stale RUNNING session %s", sid)
+        return None
+    return row
+
+
 def _find_existing_shadow_session_sync(
     hearing_id: str,
     evidence_pack_hash: str,
@@ -222,7 +305,9 @@ def _find_existing_shadow_session_sync(
             (hearing_id, evidence_pack_hash),
         )
         rows = fetch_all(cur)
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        return _maybe_reap_running_row(rows[0])
     finally:
         conn.close()
 
@@ -543,6 +628,10 @@ def _expire_evidence_pack(hearing_id: str) -> None:
 # Stage 1: Specialist agents
 # ---------------------------------------------------------------------------
 
+def _specialist_parse_failed(position: SpecialistPosition | DegradedPosition) -> bool:
+    return isinstance(position, DegradedPosition) or bool(getattr(position, "degraded", False))
+
+
 async def _run_specialist(
     role: str,
     agent_name: str,
@@ -566,16 +655,49 @@ async def _run_specialist(
                 ),
             }
         ]
-        resp = await run_agent_object(
-            account=account,
-            user=user,
-            private_key_path=pk_path,
-            agent_name=agent_name,
-            messages=messages,
-            timeout=timeout,
+        resp: Dict[str, Any] = {}
+        position: SpecialistPosition | DegradedPosition = DegradedPosition(
+            role=role,
+            degraded=True,
+            degraded_reason="no agent attempt",
         )
-        raw_text = extract_agent_text(resp)
-        position = parse_specialist_position(raw_text, role)
+        for attempt in range(1, _SPECIALIST_AGENT_MAX_ATTEMPTS + 1):
+            resp = await run_agent_object(
+                account=account,
+                user=user,
+                private_key_path=pk_path,
+                agent_name=agent_name,
+                messages=messages,
+                timeout=timeout,
+            )
+            position = parse_specialist_position(extract_agent_text(resp), role)
+            if not _specialist_parse_failed(position):
+                break
+            if attempt < _SPECIALIST_AGENT_MAX_ATTEMPTS:
+                logger.warning(
+                    "shadow_stage1: %s parse failed on attempt %d/%d (%s); JSON-only retry",
+                    role,
+                    attempt,
+                    _SPECIALIST_AGENT_MAX_ATTEMPTS,
+                    getattr(position, "degraded_reason", "empty response"),
+                )
+                messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Do not call any tools. Using the evidence you already retrieved, "
+                            "output ONLY your specialist position JSON object now. "
+                            "Required keys: role, stance, confidence, rationale, evidence_used. "
+                            "No markdown fences. No prose."
+                        ),
+                    },
+                ]
+            else:
+                logger.warning(
+                    "shadow_stage1: %s still failed after %d attempts; leaving degraded",
+                    role,
+                    _SPECIALIST_AGENT_MAX_ATTEMPTS,
+                )
         elapsed = int((time.monotonic() - t0) * 1000)
         logger.info("shadow_stage1: %s done in %dms stance=%s", role, elapsed, getattr(position, "stance", "?"))
         return role, position, elapsed
@@ -1129,7 +1251,9 @@ def _insert_chair_row_sync(
     try:
         cur = conn.cursor()
         trade_json = ch.shadow_trade.model_dump() if ch.shadow_trade else {}
-        raw_json = _jdump(raw_response or {})[:8000]
+        raw_json = _chair_raw_json_for_persist(
+            raw_response if isinstance(raw_response, dict) else None
+        )
         cur.execute(
             """
             INSERT INTO MIP.APP.SHADOW_CHAIR_RULING
@@ -1709,10 +1833,34 @@ async def orchestrate_shadow_board(
             await asyncio.to_thread(_fetch_hearing_data, hearing_id)
         )
         result.proposal_id = int(proposal.get("PROPOSAL_ID") or 0)
+
+        dossier_payload = {}
+        if phase4_dossier:
+            raw_dp = phase4_dossier.get("DOSSIER_PAYLOAD_JSON")
+            if isinstance(raw_dp, str):
+                try:
+                    dossier_payload = json.loads(raw_dp) or {}
+                except Exception:
+                    dossier_payload = {}
+            elif isinstance(raw_dp, dict):
+                dossier_payload = raw_dp
+
+        symbol = str(proposal.get("SYMBOL") or snapshot.get("SYMBOL") or "")
+        side = str(proposal.get("DIRECTION") or snapshot.get("SIDE") or "LONG")
+        logger.info("shadow_stage0.5: computing RTH intraday session picture for %s", symbol)
+        intraday_picture = await asyncio.to_thread(
+            build_shadow_intraday_session_picture,
+            symbol=symbol,
+            side=side,
+            snapshot=snapshot,
+            dossier_payload=dossier_payload,
+        )
+
         pack = build_shadow_evidence_pack(
             hearing, snapshot, proposal, roles, artifacts,
             phase4_thesis=phase4_thesis,
             phase4_dossier=phase4_dossier,
+            intraday_session_picture=intraday_picture,
         )
         await asyncio.to_thread(_stage_evidence_pack, pack, session_id)
         result.stage_reached = 0
@@ -1904,6 +2052,15 @@ async def orchestrate_shadow_board(
             result.degraded = True
             result.degraded_reason = "One or more stages produced degraded output"
 
+    except asyncio.CancelledError:
+        logger.error("shadow_board: orchestration CANCELLED for hearing %s", hearing_id)
+        result.status = "FAILED"
+        result.degraded = True
+        result.degraded_reason = "ORCHESTRATION_CANCELLED"
+        if not result.shadow_stance:
+            result.shadow_stance = "DEFER"
+            result.shadow_confidence = 0.0
+        raise
     except Exception as exc:
         logger.error("shadow_board: orchestration FAILED for hearing %s: %s", hearing_id, exc, exc_info=True)
         result.status = "FAILED"
@@ -1915,8 +2072,13 @@ async def orchestrate_shadow_board(
 
     finally:
         result.run_ms = int((time.monotonic() - run_start) * 1000)
+        if str(result.status or "").upper() == "RUNNING":
+            result.status = "FAILED"
+            result.degraded = True
+            if not result.degraded_reason:
+                result.degraded_reason = "ORCHESTRATION_INCOMPLETE"
 
-        # Stage 6: Finalize. Child rows (positions/conflicts/challenge/
+        # Stage 6: Finalize.
         # revision/chair) were written incrementally during the run via
         # _safe_checkpoint(...) calls, so the only thing left is the
         # terminal UPDATE on the session row (status, stance, confidence,
@@ -2044,6 +2206,8 @@ def _select_shadow_session_row_sync(
         None,
     )
     if running:
+        running = _maybe_reap_running_row(running)
+    if running:
         return running, False
 
     target_hash = evidence_pack_hash
@@ -2065,6 +2229,86 @@ def _select_shadow_session_row_sync(
                 return row, False
 
     return rows[0], True
+
+
+def _synthesize_chair_from_session_rows(
+    session: Dict[str, Any],
+    specialist_rows: List[Dict[str, Any]],
+    conflict_rows: List[Dict[str, Any]],
+    revision_rows: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Rebuild chair narrative when SHADOW_CHAIR_RULING insert failed but the
+    session row carries the terminal stance (common when RAW_RESPONSE JSON was
+    truncated mid-serialize during checkpoint persist).
+    """
+    if not specialist_rows:
+        return None
+    positions: Dict[str, SpecialistPosition] = {}
+    for r in specialist_rows:
+        role = str(r.get("ROLE_NAME") or "").upper()
+        if not role:
+            continue
+        positions[role] = SpecialistPosition(
+            role=role,
+            stance=str(r.get("STANCE") or "DEFER"),
+            confidence=float(r.get("CONFIDENCE") or 0.5),
+            rationale=str(r.get("RATIONALE") or ""),
+            evidence_used=[],
+        )
+    revisions: List[RevisionTurn] = []
+    for r in revision_rows:
+        revisions.append(RevisionTurn(
+            role_name=str(r.get("ROLE_NAME") or ""),
+            revised_stance=str(r.get("REVISED_STANCE") or ""),
+            original_stance=str(r.get("ORIGINAL_STANCE") or ""),
+            stance_changed=bool(r.get("STANCE_CHANGED")),
+            revision_note=str(r.get("REVISION_NOTE") or ""),
+            parse_ok=bool(r.get("PARSE_OK", True)),
+            degraded=bool(r.get("DEGRADED", False)),
+        ))
+    conflicts: List[ConflictEntry] = []
+    for c in conflict_rows:
+        conflicts.append(ConflictEntry(
+            role_a=str(c.get("ROLE_A") or ""),
+            role_b=str(c.get("ROLE_B") or ""),
+            stance_a=str(c.get("STANCE_A") or ""),
+            stance_b=str(c.get("STANCE_B") or ""),
+            severity=str(c.get("SEVERITY") or "MINOR"),
+            challenger_role=c.get("CHALLENGER_ROLE"),
+            target_role=c.get("TARGET_ROLE"),
+        ))
+    if not specialists_ready_for_plurality_fallback(positions):
+        return None
+    ruling = synthesize_chair_plurality_fallback(positions, revisions, conflicts)
+    sess_stance = str(session.get("SHADOW_STANCE") or "").upper()
+    sess_conf = session.get("SHADOW_CONFIDENCE")
+    try:
+        sess_conf_f = float(sess_conf) if sess_conf is not None else None
+    except (TypeError, ValueError):
+        sess_conf_f = None
+    if sess_conf_f is not None and sess_conf_f <= 0:
+        sess_conf_f = None
+    trade = ruling.shadow_trade.model_dump() if ruling.shadow_trade else {}
+    note = (
+        "Chair ruling reconstructed from specialist positions "
+        "(chair row missing from persistence)."
+    )
+    return {
+        "shadow_stance": sess_stance or ruling.shadow_stance,
+        "shadow_confidence": (
+            sess_conf_f if sess_conf_f is not None else ruling.shadow_confidence
+        ),
+        "plurality_basis": ruling.plurality_basis or note,
+        "conflict_resolution": ruling.conflict_resolution or note,
+        "shadow_trade": trade,
+        "top_supports": ruling.top_supports,
+        "top_tensions": ruling.top_tensions,
+        "parse_ok": True,
+        "degraded": True,
+        "degraded_reason": "CHAIR_ROW_MISSING_SYNTHESIZED",
+        "synthesized": True,
+    }
 
 
 def fetch_shadow_session(
@@ -2125,6 +2369,36 @@ def fetch_shadow_session(
                     return v
             return v
 
+        status_upper = str(session.get("STATUS") or "").upper()
+        is_running = status_upper == "RUNNING"
+
+        if chair_rows:
+            chair_payload: Optional[Dict[str, Any]] = {
+                "shadow_stance": chair_rows[0].get("SHADOW_STANCE"),
+                "shadow_confidence": chair_rows[0].get("SHADOW_CONFIDENCE"),
+                "plurality_basis": chair_rows[0].get("PLURALITY_BASIS"),
+                "conflict_resolution": chair_rows[0].get("CONFLICT_RESOLUTION"),
+                "shadow_trade": _v(chair_rows[0], "SHADOW_TRADE_JSON"),
+                "top_supports": _v(chair_rows[0], "TOP_SUPPORTS"),
+                "top_tensions": _v(chair_rows[0], "TOP_TENSIONS"),
+                "parse_ok": chair_rows[0].get("PARSE_OK"),
+                "degraded": chair_rows[0].get("DEGRADED"),
+            }
+        elif is_running:
+            # Never synthesize or expose a chair verdict while the session is
+            # still deliberating — partial specialist rows caused premature
+            # DEFER/WAIT_RECLAIM to appear mid-revision in the UI.
+            chair_payload = None
+        else:
+            chair_payload = _synthesize_chair_from_session_rows(
+                session, specialist_rows, conflict_rows, revision_rows,
+            )
+
+        # Session row stance/confidence are only sealed at finalize; suppress
+        # them until terminal so the headline does not flash a stale verdict.
+        shadow_stance_out = session.get("SHADOW_STANCE") if not is_running else None
+        shadow_confidence_out = session.get("SHADOW_CONFIDENCE") if not is_running else None
+
         return {
             "ok": True,
             "session_id": sid,
@@ -2132,8 +2406,8 @@ def fetch_shadow_session(
             "proposal_id": session.get("PROPOSAL_ID"),
             "snapshot_id": session.get("SNAPSHOT_ID"),
             "evidence_pack_hash": session.get("EVIDENCE_PACK_HASH"),
-            "shadow_stance": session.get("SHADOW_STANCE"),
-            "shadow_confidence": session.get("SHADOW_CONFIDENCE"),
+            "shadow_stance": shadow_stance_out,
+            "shadow_confidence": shadow_confidence_out,
             "stage_reached": session.get("STAGE_REACHED"),
             "status": session.get("STATUS"),
             "degraded": session.get("DEGRADED"),
@@ -2188,20 +2462,7 @@ def fetch_shadow_session(
                 }
                 for r in revision_rows
             ],
-            "chair": (
-                {
-                    "shadow_stance": chair_rows[0].get("SHADOW_STANCE"),
-                    "shadow_confidence": chair_rows[0].get("SHADOW_CONFIDENCE"),
-                    "plurality_basis": chair_rows[0].get("PLURALITY_BASIS"),
-                    "conflict_resolution": chair_rows[0].get("CONFLICT_RESOLUTION"),
-                    "shadow_trade": _v(chair_rows[0], "SHADOW_TRADE_JSON"),
-                    "top_supports": _v(chair_rows[0], "TOP_SUPPORTS"),
-                    "top_tensions": _v(chair_rows[0], "TOP_TENSIONS"),
-                    "parse_ok": chair_rows[0].get("PARSE_OK"),
-                    "degraded": chair_rows[0].get("DEGRADED"),
-                }
-                if chair_rows else None
-            ),
+            "chair": chair_payload,
         }
     finally:
         conn.close()

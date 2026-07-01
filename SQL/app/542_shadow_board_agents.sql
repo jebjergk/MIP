@@ -3,7 +3,7 @@
    Shadow Board — GET_SHADOW_EVIDENCE_SLICE stored procedure
    + CREATE AGENT objects for 6 specialists and 1 chair.
 
-   Pack version 2.0.0 — adds Phase 4 proposal-board intelligence slices.
+   Pack version 2.1.0 — adds intraday_session_picture (RTH substantiation slice).
 
    Deployment order:
      1. GET_SHADOW_EVIDENCE_SLICE (tool backing for all agents)
@@ -27,26 +27,28 @@ USE SCHEMA APP;
      PATH_TRADEABILITY, PROTECTION_EXIT, SYMBOL_BEHAVIOR,
      SHADOW_CHAIR
 
-   ALLOWLIST — slice_name (full catalog, pack v2.0.0):
+   ALLOWLIST — slice_name (full catalog, pack v2.1.0):
      proposal_meta, structural_state, thesis_summary,
      entry_zone, live_price, regime_state, live_bars,
      path_metrics, mfe_mae, invalidation, trust_label,
      deltas_summary, artifacts_summary,
-     phase4_thesis_verdict, phase4_dossier_context
+     phase4_thesis_verdict, phase4_dossier_context,
+     intraday_session_picture
 
    Role-to-slice access map (closed world):
      STRUCTURAL_THESIS  -> proposal_meta, structural_state, thesis_summary,
                            phase4_thesis_verdict, phase4_dossier_context
      ENTRY_GEOMETRY     -> proposal_meta, entry_zone, live_price,
-                           phase4_dossier_context
+                           phase4_dossier_context, intraday_session_picture
      REGIME             -> proposal_meta, regime_state, live_bars,
-                           phase4_dossier_context
+                           phase4_dossier_context, intraday_session_picture
      PATH_TRADEABILITY  -> proposal_meta, path_metrics, mfe_mae,
-                           phase4_thesis_verdict, phase4_dossier_context
+                           phase4_thesis_verdict, phase4_dossier_context,
+                           intraday_session_picture
      PROTECTION_EXIT    -> proposal_meta, invalidation, live_price,
                            phase4_thesis_verdict, phase4_dossier_context
      SYMBOL_BEHAVIOR    -> proposal_meta, trust_label, path_metrics, live_bars,
-                           phase4_dossier_context
+                           phase4_dossier_context, intraday_session_picture
      SHADOW_CHAIR       -> all slices above (no real_board_verdict)
 
    No dynamic SQL. No writes. Only reads SHADOW_EVIDENCE_PACK_CACHE.
@@ -66,7 +68,7 @@ import json
 
 # ---------------------------------------------------------------------------
 # Closed-world allowlists — hardcoded, no external config reads
-# Pack v2.0.0: adds phase4_thesis_verdict, phase4_dossier_context
+# Pack v2.1.0: adds intraday_session_picture (RTH execution substantiation)
 # ---------------------------------------------------------------------------
 _ALLOWED_ROLES = {
     'STRUCTURAL_THESIS', 'ENTRY_GEOMETRY', 'REGIME',
@@ -80,6 +82,7 @@ _ALLOWED_SLICES = {
     'path_metrics', 'mfe_mae', 'invalidation', 'trust_label',
     'deltas_summary', 'artifacts_summary',
     'phase4_thesis_verdict', 'phase4_dossier_context',
+    'intraday_session_picture',
 }
 
 # Role-to-slice access map (mirrors shadow_types.py ROLE_SLICE_MAP)
@@ -90,15 +93,16 @@ _ROLE_SLICE_MAP = {
     },
     'ENTRY_GEOMETRY': {
         'proposal_meta', 'entry_zone', 'live_price',
-        'phase4_dossier_context',
+        'phase4_dossier_context', 'intraday_session_picture',
     },
     'REGIME': {
         'proposal_meta', 'regime_state', 'live_bars',
-        'phase4_dossier_context',
+        'phase4_dossier_context', 'intraday_session_picture',
     },
     'PATH_TRADEABILITY': {
         'proposal_meta', 'path_metrics', 'mfe_mae',
         'phase4_thesis_verdict', 'phase4_dossier_context',
+        'intraday_session_picture',
     },
     'PROTECTION_EXIT': {
         'proposal_meta', 'invalidation', 'live_price',
@@ -106,7 +110,7 @@ _ROLE_SLICE_MAP = {
     },
     'SYMBOL_BEHAVIOR': {
         'proposal_meta', 'trust_label', 'path_metrics', 'live_bars',
-        'phase4_dossier_context',
+        'phase4_dossier_context', 'intraday_session_picture',
     },
     'SHADOW_CHAIR': {
         'proposal_meta', 'structural_state', 'thesis_summary',
@@ -114,6 +118,7 @@ _ROLE_SLICE_MAP = {
         'path_metrics', 'mfe_mae', 'invalidation', 'trust_label',
         'deltas_summary', 'artifacts_summary',
         'phase4_thesis_verdict', 'phase4_dossier_context',
+        'intraday_session_picture',
     },
 }
 
@@ -176,7 +181,7 @@ $$;
 -- SHADOW_STRUCTURAL_THESIS_AGENT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_STRUCTURAL_THESIS_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: STRUCTURAL_THESIS specialist — Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: STRUCTURAL_THESIS specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -271,7 +276,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_STRUCTURAL_THESIS_AGENT
 -- SHADOW_ENTRY_GEOMETRY_AGENT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: ENTRY_GEOMETRY specialist — Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: ENTRY_GEOMETRY specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -287,12 +292,18 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
           proposal_meta          — symbol, side, setup family
           entry_zone             — zone bounds and live price distance
           live_price             — latest/open/prior close
-          phase4_dossier_context — Phase 4 dossier context
-                                   (current_range_position_pct, broken_resistance_as_support,
-                                    nearest_support, nearest_resistance, levels).
+          phase4_dossier_context — Phase 4 dossier context (STRUCTURAL_PRIOR from proposal night).
                                    phase4_available=false for pre-Phase-4 proposals.
+          intraday_session_picture — deterministic RTH substantiation since session open
+                                       (verdict_bucket, direction_alignment, vs_overnight_dossier).
+                                       When session_available=true and
+                                       vs_overnight_dossier.overnight_flags_still_binding=false,
+                                       today's tape may override overnight confirmation flags.
 
         Call at least entry_zone and live_price before forming a position.
+        When session_available=true, call intraday_session_picture and weigh it for
+        execution timing. Do not WAIT_RECLAIM based solely on overnight dossier flags
+        when intraday substantiation is SUPPORTS and overnight_flags_still_binding=false.
         When phase4_available=true in phase4_dossier_context, consider
         broken_resistance_as_support zones and nearest_resistance in your
         entry geometry assessment.
@@ -321,9 +332,9 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
             Retrieves evidence slices for ENTRY_GEOMETRY role. Available:
             proposal_meta, entry_zone (zone bounds + live price distance),
             live_price (latest/open/prior close),
-            phase4_dossier_context (broken_resistance_as_support/nearest_support/
-              nearest_resistance/current_range_position_pct;
-              phase4_available=false for pre-Phase-4 proposals).
+            phase4_dossier_context (STRUCTURAL_PRIOR; broken_resistance/nearest levels),
+            intraday_session_picture (RTH execution substantiation since open;
+              verdict_bucket, reclaim_status, overnight_flags_still_binding).
           input_schema:
             type: object
             properties:
@@ -336,7 +347,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, entry_zone, live_price,
-                  phase4_dossier_context.
+                  phase4_dossier_context, intraday_session_picture.
             required:
               - hearing_id
               - role_name
@@ -356,7 +367,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
 -- SHADOW_REGIME_AGENT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: REGIME specialist — Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: REGIME specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -371,12 +382,14 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
           proposal_meta          — symbol, side, setup family
           regime_state           — trend/vol regime at proposal time vs now
           live_bars              — recent bar trace and vol regime
-          phase4_dossier_context — Phase 4 dossier context
-                                   (continuation_quality, candle_psychology, recent_cluster,
-                                    trend_shape_class, structural_timeline_summary).
+          phase4_dossier_context — Phase 4 dossier context (STRUCTURAL_PRIOR from proposal night).
                                    phase4_available=false for pre-Phase-4 proposals.
+          intraday_session_picture — RTH session character since open (chop_score, wick_noise,
+                                       direction_alignment, session_character).
 
         Call at least regime_state before forming a position.
+        When session_available=true, call intraday_session_picture — it reflects today's
+        session regime, not the overnight dossier candle_psychology cluster.
         When phase4_available=true in phase4_dossier_context, use
         continuation_quality and candle_psychology.recent_cluster to
         inform your regime assessment.
@@ -405,8 +418,8 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
             Retrieves evidence slices for REGIME role. Available:
             proposal_meta, regime_state (trend/vol regime at proposal + now),
             live_bars (recent bar trace),
-            phase4_dossier_context (continuation_quality/candle_psychology/trend_shape_class;
-              phase4_available=false for pre-Phase-4 proposals).
+            phase4_dossier_context (STRUCTURAL_PRIOR continuation/candle context),
+            intraday_session_picture (RTH chop/wick/session_character since open).
           input_schema:
             type: object
             properties:
@@ -419,7 +432,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, regime_state, live_bars,
-                  phase4_dossier_context.
+                  phase4_dossier_context, intraday_session_picture.
             required:
               - hearing_id
               - role_name
@@ -439,7 +452,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
 -- SHADOW_PATH_TRADEABILITY_AGENT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: PATH_TRADEABILITY specialist — Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: PATH_TRADEABILITY specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -458,12 +471,15 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
           phase4_thesis_verdict  — Phase 4 board thesis health and actionability
                                    (thesis_health, actionability_summary, primary_reason_code).
                                    phase4_available=false for pre-Phase-4 proposals.
-          phase4_dossier_context — Phase 4 dossier context
-                                   (continuation_quality, resistance_overhead_risk,
-                                    current_range_position_pct).
+          phase4_dossier_context — Phase 4 dossier context (STRUCTURAL_PRIOR).
                                    phase4_available=false for pre-Phase-4 proposals.
+          intraday_session_picture — RTH execution substantiation (verdict_bucket,
+                                       vs_overnight_dossier.overnight_flags_still_binding).
 
         Call at least path_metrics before forming a position.
+        When session_available=true, call intraday_session_picture. If verdict_bucket
+        is SUPPORTS and overnight_flags_still_binding is false, do not WAIT_RECLAIM
+        based solely on overnight continuation_quality=UNCONFIRMED or confirmation_needed.
         When phase4_available=true, weigh continuation_quality and
         resistance_overhead_risk alongside historical path metrics.
 
@@ -493,8 +509,8 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
             mfe_mae (max adverse/favorable excursion),
             phase4_thesis_verdict (thesis_health/actionability_summary;
               phase4_available=false for pre-Phase-4 proposals),
-            phase4_dossier_context (continuation_quality/resistance_overhead_risk;
-              phase4_available=false for pre-Phase-4 proposals).
+            phase4_dossier_context (STRUCTURAL_PRIOR continuation/resistance context),
+            intraday_session_picture (RTH verdict_bucket, overnight_flags_still_binding).
           input_schema:
             type: object
             properties:
@@ -507,7 +523,8 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, path_metrics, mfe_mae,
-                  phase4_thesis_verdict, phase4_dossier_context.
+                  phase4_thesis_verdict, phase4_dossier_context,
+                  intraday_session_picture.
             required:
               - hearing_id
               - role_name
@@ -527,7 +544,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
 -- SHADOW_PROTECTION_EXIT_AGENT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_PROTECTION_EXIT_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: PROTECTION_EXIT specialist — Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: PROTECTION_EXIT specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -616,7 +633,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PROTECTION_EXIT_AGENT
 -- SHADOW_SYMBOL_BEHAVIOR_AGENT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: SYMBOL_BEHAVIOR specialist — Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: SYMBOL_BEHAVIOR specialist — Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -633,13 +650,14 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
           trust_label            — trust classification and setup family
           path_metrics           — path quality metrics
           live_bars              — recent bar trace and vol regime
-          phase4_dossier_context — Phase 4 dossier context
-                                   (candle_psychology, recent_cluster, trend_shape_class,
-                                    continuation_quality).
+          phase4_dossier_context — Phase 4 dossier context (STRUCTURAL_PRIOR candle cluster).
                                    phase4_available=false for pre-Phase-4 proposals.
+          intraday_session_picture — today's RTH wick_noise, chop_score, session_character.
 
-        Call at least trust_label and live_bars before forming a position.
-        When phase4_available=true, use candle_psychology.recent_cluster to
+        Call at least trust_label before forming a position.
+        When session_available=true, prefer intraday_session_picture over dossier
+        candle_psychology for today's bar expression.
+        When phase4_available=true, use candle_psychology.recent_cluster as
         cross-check recent bar expression and continuation quality.
 
         STANCE OPTIONS (choose exactly one):
@@ -666,8 +684,8 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
             Retrieves evidence slices for SYMBOL_BEHAVIOR role. Available:
             proposal_meta, trust_label (trust classification + setup family),
             path_metrics (path quality), live_bars (recent bar trace and vol regime),
-            phase4_dossier_context (candle_psychology/recent_cluster/continuation_quality;
-              phase4_available=false for pre-Phase-4 proposals).
+            phase4_dossier_context (STRUCTURAL_PRIOR candle cluster),
+            intraday_session_picture (RTH wick_noise/chop/session_character).
           input_schema:
             type: object
             properties:
@@ -680,7 +698,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, trust_label, path_metrics, live_bars,
-                  phase4_dossier_context.
+                  phase4_dossier_context, intraday_session_picture.
             required:
               - hearing_id
               - role_name
@@ -703,7 +721,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
    the symbolic shadow trade. Cannot execute. No write access.
    ================================================================ */
 CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
-  COMMENT = 'Shadow Board pack v2.0.0: Shadow Chair — final synthesis, Phase 4-aware'
+  COMMENT = 'Shadow Board pack v2.1.0: Shadow Chair — final synthesis, Phase 4-aware'
   FROM SPECIFICATION $$
     models:
       orchestration: claude-haiku-4-5
@@ -721,7 +739,19 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
           entry_zone, live_price, regime_state, live_bars,
           path_metrics, mfe_mae, invalidation, trust_label,
           deltas_summary, artifacts_summary,
-          phase4_thesis_verdict, phase4_dossier_context.
+          phase4_thesis_verdict, phase4_dossier_context,
+          intraday_session_picture.
+
+        Temporal authority (pack v2.1.0):
+          phase4_dossier_context  — STRUCTURAL_PRIOR from proposal night. Context for
+                                    why the name is on the board; not an automatic
+                                    execution veto when contradicted by live RTH tape.
+          intraday_session_picture — EXECUTION_SUBSTANTIATION from RTH open to now
+                                    (pre-market excluded). When session_available=true
+                                    and vs_overnight_dossier.overnight_flags_still_binding
+                                    is false with verdict_bucket=SUPPORTS, today's session
+                                    overrides overnight UNCONFIRMED / confirmation_needed
+                                    flags for entry timing.
 
         Phase 4 slices (when phase4_available=true):
           phase4_thesis_verdict   — the Phase 4 board chair's verdict for this proposal.
@@ -740,11 +770,14 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
         You will also receive specialist positions in your message context.
 
         RULING PROCESS:
-        1. Count stances across all 6 specialists (using final/revised positions).
-        2. Identify plurality stance (most common; break ties conservatively toward DENY/DEFER).
-        3. Note any CRITICAL conflicts (APPROVE vs DENY across specialists).
-        4. Formulate the shadow trade construction: symbolic entry parameters based on evidence.
-        5. Output your ruling as JSON.
+        1. Call intraday_session_picture when available — weigh it for execution timing.
+        2. Count stances across all 6 specialists (using final/revised positions).
+        3. Identify plurality stance (most common; break ties conservatively toward DENY/DEFER
+           UNLESS intraday_session_picture is SUPPORTS with overnight_flags_still_binding=false,
+           in which case break ties toward APPROVE_REDUCED/APPROVE).
+        4. Note any CRITICAL conflicts (APPROVE vs DENY across specialists).
+        5. Formulate the shadow trade construction: symbolic entry parameters based on evidence.
+        6. Output your ruling as JSON.
 
         STANCE OPTIONS for your ruling (same 5):
           APPROVE, APPROVE_REDUCED, WAIT_RECLAIM, DEFER, DENY
@@ -797,9 +830,10 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
             phase4_thesis_verdict (thesis_health/final_action/why_not_opposite/risk_treatment/
               prior_thesis_reference/actionability_summary; phase4_available=false for
               pre-Phase-4 proposals),
-            phase4_dossier_context (continuation_quality/resistance_overhead_risk/
-              candle_psychology/broken_resistance_as_support/levels/structural_timeline_summary;
-              phase4_available=false for pre-Phase-4 proposals).
+            phase4_dossier_context (STRUCTURAL_PRIOR levels/continuation context;
+              phase4_available=false for pre-Phase-4 proposals),
+            intraday_session_picture (RTH substantiation; verdict_bucket,
+              overnight_flags_still_binding, operator_line).
           input_schema:
             type: object
             properties:
@@ -811,8 +845,8 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
               slice_name:
                 type: string
                 description: >
-                  Any slice from the full catalog including phase4_thesis_verdict
-                  and phase4_dossier_context.
+                  Any slice from the full catalog including phase4_thesis_verdict,
+                  phase4_dossier_context, and intraday_session_picture.
             required:
               - hearing_id
               - role_name

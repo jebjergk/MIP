@@ -94,8 +94,8 @@ _DEFAULT_MAX_PROPOSALS = 8
 
 # Bounded AI_COMPLETE cost model: exactly 6 LLM calls per candidate (5 + chair).
 _LLM_CALLS_PER_CANDIDATE = 6
-_DEFAULT_MAX_CANDIDATES: Optional[int] = 20
-_DEFAULT_MAX_LLM_CALLS_PER_RUN = 132  # 20 candidates × 6 AI_COMPLETE calls + headroom
+_DEFAULT_MAX_CANDIDATES: Optional[int] = 35
+_DEFAULT_MAX_LLM_CALLS_PER_RUN = 222  # 35 candidates × 6 AI_COMPLETE calls + headroom
 _DEFAULT_DAILY_RUNS_PER_PORTFOLIO = 1
 _DEFAULT_SPECIALIST_MODEL = "llama3.1-8b"
 _DEFAULT_CHAIR_MODEL = "llama3.1-8b"

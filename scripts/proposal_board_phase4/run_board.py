@@ -102,16 +102,16 @@ def main() -> int:
                         help="Max specialists per dossier in parallel.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Run all stages but skip STRUCTURAL_TRADE_PROPOSALS insert.")
-    parser.add_argument("--max-candidates", type=int, default=20,
+    parser.add_argument("--max-candidates", type=int, default=35,
                         help=(
                             "Cap on top-scoring symbols sent to AI_COMPLETE after "
-                            "structural pre-screen (default 20)."
+                            "structural pre-screen (default 35)."
                         ))
-    parser.add_argument("--daily-call-budget", type=int, default=132,
+    parser.add_argument("--daily-call-budget", type=int, default=222,
                         help=(
                             "Max estimated LLM calls for this run. "
                             "Run aborts before fan-out if projected calls exceed this. "
-                            "Default 132 (= 20 candidates × 6 calls + headroom)."
+                            "Default 222 (= 35 candidates × 6 calls + headroom)."
                         ))
     parser.add_argument("--allow-budget-override", action="store_true",
                         help=(
@@ -141,7 +141,7 @@ def main() -> int:
     if args.max_candidates is None and not args.allow_budget_override:
         _log.warning(
             "phase4 run_board: WARNING — no --max-candidates set and no "
-            "--allow-budget-override. Pass --max-candidates 20 (default) or "
+            "--allow-budget-override. Pass --max-candidates 35 (default) or "
             "explicit override."
         )
 

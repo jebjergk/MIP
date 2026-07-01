@@ -1,0 +1,13 @@
+-- Raise Phase 4 prescreen cap support: 35 candidates x 6 LLM calls + headroom.
+USE ROLE MIP_ADMIN_ROLE;
+USE DATABASE MIP;
+
+UPDATE MIP.APP.APP_CONFIG
+   SET CONFIG_VALUE = '222',
+       DESCRIPTION = 'Hard cap on AI_COMPLETE calls per board run (6 per candidate, max_candidates=35)',
+       UPDATED_AT = CURRENT_TIMESTAMP()
+ WHERE CONFIG_KEY = 'MAX_LLM_CALLS_PER_RUN';
+
+SELECT CONFIG_KEY, CONFIG_VALUE, DESCRIPTION
+  FROM MIP.APP.APP_CONFIG
+ WHERE CONFIG_KEY = 'MAX_LLM_CALLS_PER_RUN';

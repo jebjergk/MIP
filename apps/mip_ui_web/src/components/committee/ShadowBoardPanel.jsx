@@ -15,6 +15,7 @@
  *   evidenceHash, snapshotId, runningProgress, showManualRun
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import IntradaySessionPictureCard from './IntradaySessionPictureCard'
 import './ShadowBoardPanel.css'
 
 // ---------------------------------------------------------------------------
@@ -830,6 +831,9 @@ export default function ShadowBoardPanel({
   const effectiveSessionId = shadowPayload?.session_id || runningProgress?.session_id
   const effectiveHash = shadowPayload?.evidence_pack_hash || runningProgress?.evidence_pack_hash || evidenceHash
   const effectiveSnapshotId = shadowPayload?.snapshot_id ?? runningProgress?.snapshot_id ?? snapshotId
+  const intradayPicture = shadowPayload?.intraday_session_picture
+    ?? runningProgress?.intraday_session_picture
+    ?? null
   const startedAtMs = runningProgress?.started_at_ms || null
   const liveElapsed = useElapsedSeconds(isRunning, startedAtMs)
   const [showLiveDeliberation, setShowLiveDeliberation] = useState(false)
@@ -914,6 +918,8 @@ export default function ShadowBoardPanel({
           </button>
         )}
       </div>
+
+      <IntradaySessionPictureCard picture={intradayPicture} />
 
       {/* Final verdict ribbon — only after the session has sealed */}
       {isTerminal && shadowPayload?.shadow_stance && (

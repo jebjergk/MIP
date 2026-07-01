@@ -1082,3 +1082,148 @@
 .sbp-running-summary--solo {
   padding: 0.75rem 1rem;
 }
+
+/* ---------- Intraday session picture (Stage 0.5) ---------- */
+.isp-card {
+  margin: 0.65rem 1rem 0;
+  padding: 0.65rem 0.75rem;
+  background: rgba(34, 211, 238, 0.04);
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 8px;
+}
+
+.isp-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.isp-chip {
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: #22d3ee;
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 3px;
+  padding: 2px 6px;
+  text-transform: uppercase;
+}
+
+.isp-subtitle {
+  font-size: 0.68rem;
+  color: var(--sbp-text-muted);
+}
+
+.isp-verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.isp-verdict {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.isp-verdict--supports {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+}
+
+.isp-verdict--mixed {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.isp-verdict--challenges {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.isp-conf-band {
+  font-size: 0.68rem;
+  color: var(--sbp-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.isp-headline {
+  margin: 0 0 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--sbp-text);
+}
+
+.isp-operator {
+  margin: 0 0 0.45rem;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--sbp-text-dim);
+}
+
+.isp-unavailable .isp-operator {
+  margin-bottom: 0.25rem;
+}
+
+.isp-reason-chip {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--sbp-text-muted);
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 3px;
+  padding: 2px 6px;
+  margin-bottom: 0.35rem;
+}
+
+.isp-metrics {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+}
+
+.isp-metrics dt {
+  margin: 0;
+  color: var(--sbp-text-muted);
+  text-transform: capitalize;
+}
+
+.isp-metrics dd {
+  margin: 0;
+  color: var(--sbp-text);
+}
+
+.isp-binding--yes {
+  color: #fbbf24;
+}
+
+.isp-binding--no {
+  color: #4ade80;
+}
+
+.isp-meta {
+  margin: 0;
+  font-size: 0.65rem;
+  color: var(--sbp-text-muted);
+}
+
+.isp-times {
+  margin-top: 0.15rem;
+}

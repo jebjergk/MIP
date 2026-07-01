@@ -2415,6 +2415,68 @@ def _synthesize_chair_from_session_rows(
     }
 
 
+def _intraday_picture_from_pack_json(pack_json: Any) -> Optional[Dict[str, Any]]:
+    """Extract intraday_session_picture from cached PACK_JSON (VARIANT or str)."""
+    if pack_json is None:
+        return None
+    if isinstance(pack_json, str):
+        try:
+            pack_json = json.loads(pack_json)
+        except Exception:
+            return None
+    if not isinstance(pack_json, dict):
+        return None
+    slices = pack_json.get("slices")
+    if not isinstance(slices, dict):
+        return None
+    intra = slices.get("intraday_session_picture")
+    return intra if isinstance(intra, dict) else None
+
+
+def _fetch_intraday_session_picture_sync(
+    cur,
+    hearing_id: str,
+    session_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Load the Stage 0.5 intraday slice from SHADOW_EVIDENCE_PACK_CACHE for UI display."""
+    try:
+        cur.execute(
+            """
+            SELECT PACK_JSON
+              FROM MIP.APP.SHADOW_EVIDENCE_PACK_CACHE
+             WHERE HEARING_ID = %s
+             ORDER BY CREATED_AT DESC
+             LIMIT 1
+            """,
+            (hearing_id,),
+        )
+        rows = fetch_all(cur)
+        if rows:
+            intra = _intraday_picture_from_pack_json(rows[0].get("PACK_JSON"))
+            if intra:
+                return intra
+        if session_id:
+            cur.execute(
+                """
+                SELECT PACK_JSON
+                  FROM MIP.APP.SHADOW_EVIDENCE_PACK_CACHE
+                 WHERE SESSION_ID = %s
+                 ORDER BY CREATED_AT DESC
+                 LIMIT 1
+                """,
+                (session_id,),
+            )
+            rows = fetch_all(cur)
+            if rows:
+                return _intraday_picture_from_pack_json(rows[0].get("PACK_JSON"))
+    except Exception as exc:
+        logger.warning(
+            "shadow_fetch: intraday_session_picture cache read failed hearing=%s: %s",
+            hearing_id, exc,
+        )
+    return None
+
+
 def fetch_shadow_session(
     hearing_id: str,
     evidence_pack_hash: Optional[str] = None,
@@ -2502,11 +2564,13 @@ def fetch_shadow_session(
         # them until terminal so the headline does not flash a stale verdict.
         shadow_stance_out = session.get("SHADOW_STANCE") if not is_running else None
         shadow_confidence_out = session.get("SHADOW_CONFIDENCE") if not is_running else None
+        intraday_picture = _fetch_intraday_session_picture_sync(cur, hearing_id, sid)
 
         return {
             "ok": True,
             "session_id": sid,
             "hearing_id": hearing_id,
+            "intraday_session_picture": intraday_picture,
             "proposal_id": session.get("PROPOSAL_ID"),
             "snapshot_id": session.get("SNAPSHOT_ID"),
             "evidence_pack_hash": session.get("EVIDENCE_PACK_HASH"),
@@ -2589,9 +2653,11 @@ def fetch_shadow_progress(
         )
         if not row:
             return None
+        sid = row.get("SESSION_ID")
+        intraday_picture = _fetch_intraday_session_picture_sync(cur, hearing_id, sid)
         return {
             "ok": True,
-            "session_id": row.get("SESSION_ID"),
+            "session_id": sid,
             "status": row.get("STATUS"),
             "stage_reached": row.get("STAGE_REACHED"),
             "degraded": row.get("DEGRADED"),
@@ -2599,6 +2665,7 @@ def fetch_shadow_progress(
             "snapshot_id": row.get("SNAPSHOT_ID"),
             "created_at": str(row.get("CREATED_AT") or ""),
             "stale_session": bool(stale_session),
+            "intraday_session_picture": intraday_picture,
         }
     finally:
         conn.close()

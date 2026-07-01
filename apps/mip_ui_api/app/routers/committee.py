@@ -687,8 +687,7 @@ def _run_evidence_only_refresh(
     `_assemble_payload`-shaped dict so existing orchestrate callers get the
     same response shape; `stance` and `confidence` in the payload are None.
 
-    Intraday substantiation artifact is still appended (it's a pure
-    evidence visualization, not a verdict).
+    Intraday RTH substantiation runs in shadow Stage 0.5 (portfolio-aware IB).
     """
     from app.committee.engine import (
         EVIDENCE_ONLY_PACK_VERSION,
@@ -700,18 +699,9 @@ def _run_evidence_only_refresh(
     live = _live_context(cur, symbol)
     snap_eng = _build_snapshot_engine_dict(snapshot)
     bundle = compute_evidence_only_dossier(snap_eng, live, EVIDENCE_ONLY_PACK_VERSION)
-    try:
-        bars_15 = fetch_intraday_bars_15m_ib(str(symbol or "").strip(), market_type=None)
-        intraday_art = build_intraday_substantiation_artifact(
-            snap_eng,
-            live,
-            bars_15,
-            snapshot.get("PROPOSAL_TS"),
-        )
-        if intraday_art:
-            bundle["artifacts"].append(intraday_art)
-    except Exception:
-        pass
+    # Intraday RTH substantiation is computed in shadow Stage 0.5 (portfolio-aware
+    # IB port). Do not call the retired committee intraday_substantiation path here —
+    # it used the wrong default port and blocked orchestrate for ~30–75s.
 
     _persist_evidence_only_hearing(
         conn,

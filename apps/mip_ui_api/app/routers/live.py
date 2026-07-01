@@ -12185,6 +12185,8 @@ async def _intelligence_only_shadow_kickoff(
     cur,
     action_id: str,
     action: dict,
+    *,
+    force_fresh_shadow: bool = False,
 ) -> dict | None:
     """Best-effort shadow-board kickoff when execution path is blocked by a
     safety gate (e.g. OPEN_MARKET_CLOSED outside the extended trading window).
@@ -12328,7 +12330,7 @@ async def _intelligence_only_shadow_kickoff(
                     snapshot_id=int(snapshot["SNAPSHOT_ID"]),
                     evidence_pack_hash=evidence_pack_hash,
                     timeout_sec=_shadow_timeout_for_orchestrate(cur),
-                    force=bool(req.force_fresh_shadow),
+                    force=bool(force_fresh_shadow),
                     action_id=action_id,
                 )
     except Exception as exc:  # noqa: BLE001
@@ -12464,6 +12466,7 @@ async def orchestrate_committee2_structural_entry(
                 try:
                     intelligence_only_shadow = await _intelligence_only_shadow_kickoff(
                         conn, cur, action_id, action,
+                        force_fresh_shadow=bool(req.force_fresh_shadow),
                     )
                 except Exception as intel_exc:  # noqa: BLE001
                     _log.warning(

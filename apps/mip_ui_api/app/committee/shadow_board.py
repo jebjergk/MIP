@@ -79,7 +79,7 @@ _SPECIALIST_AGENT_MAX_ATTEMPTS = 2
 _CHAIR_AGENT_MAX_ATTEMPTS = 2
 # RUNNING rows older than this (or with COMPLETED_AT set) are reaped as FAILED
 # so LPA never spins on a dead background task or API restart mid-run.
-_STALE_RUNNING_SECONDS = 300.0
+_STALE_RUNNING_SECONDS = 180.0
 
 # ---------------------------------------------------------------------------
 # Helpers: Snowflake JSON persistence (sync, run via asyncio.to_thread)
@@ -582,6 +582,27 @@ def _fetch_hearing_data(hearing_id: str) -> Tuple[
                 )
 
         return hearing, snapshot, proposal, roles, artifacts, phase4_thesis, phase4_dossier
+    finally:
+        conn.close()
+
+
+def _portfolio_id_for_action_sync(action_id: str) -> Optional[int]:
+    if not action_id:
+        return None
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT PORTFOLIO_ID FROM MIP.LIVE.LIVE_ACTIONS WHERE ACTION_ID = %s",
+            (str(action_id),),
+        )
+        rows = fetch_all(cur)
+        if not rows or rows[0].get("PORTFOLIO_ID") is None:
+            return None
+        return int(rows[0]["PORTFOLIO_ID"])
+    except Exception as exc:
+        logger.warning("shadow_fetch: portfolio lookup failed action=%s: %s", action_id, exc)
+        return None
     finally:
         conn.close()
 
@@ -1922,13 +1943,20 @@ async def orchestrate_shadow_board(
 
         symbol = str(proposal.get("SYMBOL") or snapshot.get("SYMBOL") or "")
         side = str(proposal.get("DIRECTION") or snapshot.get("SIDE") or "LONG")
-        logger.info("shadow_stage0.5: computing RTH intraday session picture for %s", symbol)
+        portfolio_id = None
+        if action_id:
+            portfolio_id = await asyncio.to_thread(_portfolio_id_for_action_sync, action_id)
+        logger.info(
+            "shadow_stage0.5: computing RTH intraday session picture for %s portfolio_id=%s",
+            symbol, portfolio_id,
+        )
         intraday_picture = await asyncio.to_thread(
             build_shadow_intraday_session_picture,
             symbol=symbol,
             side=side,
             snapshot=snapshot,
             dossier_payload=dossier_payload,
+            portfolio_id=portfolio_id,
         )
 
         pack = build_shadow_evidence_pack(

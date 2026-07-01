@@ -380,6 +380,7 @@ export default function LpaCommittee2Exhibits({
   const [shadowLoading, setShadowLoading] = useState(false)
   const fullFetchedFor = useRef(null)
   const pollGenerationRef = useRef(0)
+  const pollStatusRef = useRef('RUNNING')
 
   useEffect(() => {
     if (!hearingId) {
@@ -402,6 +403,8 @@ export default function LpaCommittee2Exhibits({
     fullFetchedFor.current = null
 
     // Seed progress with whatever orchestrate told us up-front.
+    const seededStatus = String(inlineShadowStatus || 'RUNNING').toUpperCase()
+    pollStatusRef.current = seededStatus
     if (inlineShadowSession || inlineShadowStatus) {
       setShadowProgress({
         session_id: inlineShadowSession,
@@ -434,12 +437,16 @@ export default function LpaCommittee2Exhibits({
           setShadowError('Agentic Committee disabled')
           return
         }
-        if (!r.ok) return
+        if (!r.ok) {
+          setShadowError(`Agentic Committee poll failed (${r.status})`)
+          return
+        }
         const j = await r.json()
         if (cancelled || pollGenerationRef.current !== generation || !j) return
+        pollStatusRef.current = String(j.status || '').toUpperCase()
         setShadowProgress(j)
 
-        const status = String(j.status || '').toUpperCase()
+        const status = pollStatusRef.current
         const stageReached = Number(j.stage_reached ?? 0)
         const isTerminal = status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED'
         const isRunningNow = status === 'RUNNING'
@@ -469,15 +476,16 @@ export default function LpaCommittee2Exhibits({
     fetchProgress()
 
     const tick = () => {
-      const status = String(
-        shadowProgress?.status || inlineShadowStatus || 'RUNNING',
-      ).toUpperCase()
+      const status = pollStatusRef.current
       if (status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED') {
-        fetchProgress()
         return
       }
       fetchProgress().finally(() => {
         if (!cancelled && pollGenerationRef.current === generation) {
+          const next = pollStatusRef.current
+          if (next === 'COMPLETE' || next === 'DEGRADED' || next === 'FAILED') {
+            return
+          }
           timer = setTimeout(tick, 1200)
         }
       })

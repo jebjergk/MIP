@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,15 @@ from app.integrations.ibkr_read_host import (
     diagnostics_live_bars_subprocess_result,
     get_live_bars_subprocess_args,
 )
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ConnectEndpoint:
+    host: str
+    port: int
+    client_id: int
 
 
 def project_root() -> Path:
@@ -53,6 +65,60 @@ def infer_ib_market_type(symbol: str, market_type: str | None) -> str:
     return "STOCK"
 
 
+def resolve_live_bars_connect(portfolio_id: int | None = None) -> dict[str, Any]:
+    """
+    IB socket target for live-bar subprocess fetches.
+
+    Matches live.py bar refresh: env defaults via ibkr_host_config, overridden by
+    LIVE_PORTFOLIO_CONFIG host/port when portfolio_id is set (real-money gateway
+    is often 7496 while .env IB_API_PORT stays 7497 for paper/TWS).
+    Client id stays the dedicated live-bars id (9436) unless env overrides.
+    """
+    try:
+        conn = dict(get_live_bars_subprocess_args())
+    except (ImportError, ModuleNotFoundError):
+        conn = {
+            "host": "127.0.0.1",
+            "port": 7497,
+            "client_id": 9436,
+            "connect_timeout_sec": 10,
+        }
+
+    if portfolio_id is None:
+        return conn
+
+    try:
+        from app.db import fetch_all, get_connection
+
+        db = get_connection()
+        try:
+            cur = db.cursor()
+            cur.execute(
+                """
+                SELECT IB_GATEWAY_HOST, IB_GATEWAY_PORT
+                  FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                 WHERE PORTFOLIO_ID = %s
+                """,
+                (int(portfolio_id),),
+            )
+            rows = fetch_all(cur)
+        finally:
+            db.close()
+        if rows:
+            row = rows[0]
+            if row.get("IB_GATEWAY_HOST"):
+                conn["host"] = str(row["IB_GATEWAY_HOST"])
+            if row.get("IB_GATEWAY_PORT") is not None:
+                conn["port"] = int(row["IB_GATEWAY_PORT"])
+    except Exception as exc:
+        logger.warning(
+            "resolve_live_bars_connect: portfolio %s lookup failed: %s",
+            portfolio_id,
+            exc,
+        )
+    return conn
+
+
 def run_agent_ibkr_live_bars(
     symbol_specs: list[dict[str, str]],
     *,
@@ -64,6 +130,7 @@ def run_agent_ibkr_live_bars(
     regular_trading_hours_only: bool = False,
     include_snapshot_quote: bool = False,
     snapshot_wait_sec: float = 2.5,
+    portfolio_id: int | None = None,
 ) -> dict[str, Any]:
     root = project_root()
     py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
@@ -97,10 +164,7 @@ def run_agent_ibkr_live_bars(
         )
         return {"status": "SUCCESS", "symbols": [], "ib_host_diagnostics": diag}
 
-    try:
-        conn = get_live_bars_subprocess_args()
-    except (ImportError, ModuleNotFoundError):
-        conn = {"host": "127.0.0.1", "port": 7497, "client_id": 9436, "connect_timeout_sec": 10}
+    conn = resolve_live_bars_connect(portfolio_id)
 
     cmd = [
         str(py),
@@ -133,9 +197,15 @@ def run_agent_ibkr_live_bars(
             "--snapshot-wait-sec",
             f"{float(snapshot_wait_sec):.2f}",
         ])
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
     proc = subprocess.run(
         cmd,
         cwd=str(root),
+        env=child_env,
         capture_output=True,
         text=True,
         timeout=timeout_sec,
@@ -149,6 +219,11 @@ def run_agent_ibkr_live_bars(
         surface_name=diagnostics_surface,
         subprocess_ok=ok,
         payload_status=st,
+        endpoint=_ConnectEndpoint(
+            str(conn["host"]),
+            int(conn["port"]),
+            int(conn["client_id"]),
+        ),
     )
     if proc.returncode != 0:
         raise HTTPException(
@@ -159,8 +234,20 @@ def run_agent_ibkr_live_bars(
                 "stderr": stderr[-2000:],
                 "payload": payload or None,
                 "ib_host_diagnostics": diag,
+                "ib_connect": {
+                    "host": conn["host"],
+                    "port": int(conn["port"]),
+                    "client_id": int(conn["client_id"]),
+                    "portfolio_id": portfolio_id,
+                },
             },
         )
     out = payload or {"status": "SUCCESS", "symbols": []}
     out["ib_host_diagnostics"] = diag
+    out["ib_connect"] = {
+        "host": conn["host"],
+        "port": int(conn["port"]),
+        "client_id": int(conn["client_id"]),
+        "portfolio_id": portfolio_id,
+    }
     return out

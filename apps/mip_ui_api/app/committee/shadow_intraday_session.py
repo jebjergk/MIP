@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from app.committee.engine import _entry_zone, _f, _invalidation, invalidation_breached
-from app.services.ibkr_live_bars import infer_ib_market_type, run_agent_ibkr_live_bars
+from app.services.ibkr_live_bars import infer_ib_market_type, resolve_live_bars_connect, run_agent_ibkr_live_bars
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +98,24 @@ def filter_bars_rth_since_open(
     return out, rth_open
 
 
-def fetch_rth_15m_bars(symbol: str, market_type: str | None = None) -> List[Dict[str, Any]]:
-    """Fetch 15m IBKR bars (RTH-only request) and trim to today's session open → now."""
+def fetch_rth_15m_bars(
+    symbol: str,
+    market_type: str | None = None,
+    *,
+    portfolio_id: int | None = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Fetch 15m IBKR bars (RTH-only request) and trim to today's session open → now.
+
+    Returns (filtered_bars, fetch_meta) where fetch_meta includes ib_connect and status.
+    """
+    meta: Dict[str, Any] = {"status": "SKIPPED", "ib_connect": resolve_live_bars_connect(portfolio_id)}
     sym = str(symbol or "").strip()
     if not sym:
-        return []
+        meta["status"] = "NO_SYMBOL"
+        return [], meta
     if infer_ib_market_type(sym, market_type) != "STOCK":
-        return []
+        meta["status"] = "NON_STOCK"
+        return [], meta
 
     try:
         payload = run_agent_ibkr_live_bars(
@@ -114,14 +125,20 @@ def fetch_rth_15m_bars(symbol: str, market_type: str | None = None) -> List[Dict
             timeout_sec=35,
             diagnostics_surface="shadow_intraday_session",
             regular_trading_hours_only=True,
+            portfolio_id=portfolio_id,
         )
+        meta["status"] = str(payload.get("status") or "UNKNOWN").upper()
+        meta["ib_connect"] = payload.get("ib_connect") or meta["ib_connect"]
     except Exception as exc:
         logger.warning("shadow_intraday: IB fetch failed for %s: %s", sym, exc)
-        return []
+        meta["status"] = "FETCH_FAILED"
+        meta["fetch_error"] = str(exc)[:400]
+        return [], meta
 
     symbols = payload.get("symbols") or []
     if not symbols or str(symbols[0].get("status") or "").upper() != "SUCCESS":
-        return []
+        meta["status"] = "NO_SYMBOL_DATA"
+        return [], meta
     raw = symbols[0].get("bars") if isinstance(symbols[0].get("bars"), list) else []
     shaped = [
         {"TS": b.get("ts"), "OPEN": b.get("open"), "HIGH": b.get("high"), "LOW": b.get("low"), "CLOSE": b.get("close")}
@@ -129,7 +146,13 @@ def fetch_rth_15m_bars(symbol: str, market_type: str | None = None) -> List[Dict
         if isinstance(b, dict)
     ]
     filtered, _ = filter_bars_rth_since_open(shaped)
-    return filtered
+    meta["raw_bar_count"] = len(shaped)
+    meta["rth_bar_count"] = len(filtered)
+    if len(shaped) > 0 and len(filtered) < 2:
+        meta["status"] = "FILTERED_EMPTY"
+    elif len(filtered) >= 2:
+        meta["status"] = "SUCCESS"
+    return filtered, meta
 
 
 def _chop_score(closes: List[float]) -> int:
@@ -273,6 +296,8 @@ def build_shadow_intraday_session_picture(
     dossier_payload: Optional[Dict[str, Any]] = None,
     bar_rows: Optional[List[Dict[str, Any]]] = None,
     now: Optional[datetime] = None,
+    portfolio_id: Optional[int] = None,
+    fetch_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Build compact intraday_session_picture slice for shadow evidence pack.
@@ -291,21 +316,36 @@ def build_shadow_intraday_session_picture(
             **base,
             "session_available": False,
             "reason": "BEFORE_RTH_OPEN",
+            "ib_fetch": fetch_meta or {"ib_connect": resolve_live_bars_connect(portfolio_id)},
             "operator_line": "RTH session has not opened yet — no intraday substantiation.",
         }
 
-    rows = bar_rows if bar_rows is not None else fetch_rth_15m_bars(symbol)
-    if bar_rows is not None:
+    meta = fetch_meta
+    rows = bar_rows
+    if rows is None:
+        rows, meta = fetch_rth_15m_bars(symbol, portfolio_id=portfolio_id)
+    elif bar_rows is not None:
         rows, _ = filter_bars_rth_since_open(rows, now=now_et)
+        meta = fetch_meta or {"status": "PROVIDED_BARS"}
 
     if len(rows) < 2:
+        reason = "INSUFFICIENT_RTH_BARS"
+        if meta and meta.get("status") == "FETCH_FAILED":
+            reason = "IB_FETCH_FAILED"
+        elif meta and meta.get("status") == "FILTERED_EMPTY":
+            reason = "RTH_FILTER_EMPTY"
         return {
             **base,
             "session_available": False,
-            "reason": "INSUFFICIENT_RTH_BARS",
+            "reason": reason,
             "rth_open_ts": _ts_iso_et(rth_open),
             "as_of_ts": _ts_iso_et(now_et),
-            "operator_line": "Insufficient RTH 15m bars since open — defer to live_price and structural prior.",
+            "ib_fetch": meta or {},
+            "operator_line": (
+                "Insufficient RTH 15m bars since open — defer to live_price and structural prior."
+                if reason == "INSUFFICIENT_RTH_BARS"
+                else f"Intraday bar fetch issue ({reason}) — defer to live_price and structural prior."
+            ),
         }
 
     side_u = (side or "LONG").upper()
@@ -405,6 +445,7 @@ def build_shadow_intraday_session_picture(
     return {
         **base,
         "session_available": True,
+        "ib_fetch": meta or {},
         "rth_open_ts": _ts_iso_et(rth_open),
         "as_of_ts": _ts_iso_et(now_et),
         "bar_count": len(rows),

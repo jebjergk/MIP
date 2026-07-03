@@ -376,6 +376,21 @@ def commit_agentic_authority(
     # can surface why STATUS did/didn't move.
     agentic_materializer = _maybe_run_agentic_materializer(action_id, result)
 
+    auto_advance = None
+    try:
+        from app.routers.live import _try_auto_advance_structural_entry_after_agentic_commit
+
+        auto_advance = _try_auto_advance_structural_entry_after_agentic_commit(
+            action_id,
+            result,
+        )
+    except Exception as adv_exc:  # noqa: BLE001
+        _log.warning(
+            "commit auto_advance failed (swallowed) action=%s: %s",
+            action_id,
+            adv_exc,
+        )
+
     # Keep LIVE_ACTIONS agentic tags aligned with the row we just committed.
     # When the materializer does not run (healthy late-stage recovery already
     # complete), stale AGENTIC_AUTHORITY_* tags would otherwise linger and
@@ -467,6 +482,7 @@ def commit_agentic_authority(
         "gate_evaluation": gate_eval,
         "agentic_primary_enabled": agentic_primary_enabled,
         "agentic_materializer": agentic_materializer,
+        "auto_advance": auto_advance,
     }
 
 

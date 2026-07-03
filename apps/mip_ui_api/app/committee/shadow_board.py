@@ -1527,6 +1527,28 @@ def _run_agentic_materializer_after_auto_commit(
                     "auto_commit materializer: applied action=%s out_status=%s",
                     action_id, (out or {}).get("status"),
                 )
+                advance_result = None
+                try:
+                    from app.routers.live import (
+                        _try_auto_advance_structural_entry_after_agentic_commit,
+                    )
+
+                    advance_result = _try_auto_advance_structural_entry_after_agentic_commit(
+                        action_id,
+                        commit_result,
+                    )
+                    if advance_result:
+                        logger.info(
+                            "auto_commit advance: action=%s result=%s",
+                            action_id,
+                            advance_result,
+                        )
+                except Exception as adv_exc:  # noqa: BLE001
+                    logger.warning(
+                        "auto_commit advance: failed (swallowed) action=%s: %s",
+                        action_id,
+                        adv_exc,
+                    )
             except Exception:
                 raw.rollback()
                 raise

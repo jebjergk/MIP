@@ -1410,16 +1410,20 @@ export default function LivePortfolioActivity() {
   }, [load, advanceLiveActionAfterCommitteeApply])
 
   // Phase 5 UX: after auto-commit (or manual confirm) on APPROVE, chain price check.
+  // Prefer overview's agentic_authority_gate (always loaded with pending rows);
+  // fall back to the separate authority fetch when shadow poll populated it.
   useEffect(() => {
     const rows = overview?.pending_decisions || []
     rows.forEach((d) => {
       const isEntry = Boolean(d.structural) && String(d.action_intent || '').toUpperCase() !== 'EXIT'
       if (!isEntry) return
       const auth = agenticAuthorityByAction[d.action_id]?.authority
-      if (!auth) return
-      const mode = String(auth.AUTHORITY_MODE || '').toUpperCase()
-      const authorityStatus = String(auth.AUTHORITY_STATUS || '').toUpperCase()
-      if (mode !== 'OPERATOR_COMMITTED' || auth.IS_STALE) return
+      const gate = d.agentic_authority_gate || {}
+      const mode = String(auth?.AUTHORITY_MODE || gate.authority_mode || '').toUpperCase()
+      const authorityStatus = String(auth?.AUTHORITY_STATUS || gate.authority_status || '').toUpperCase()
+      const isStale = Boolean(auth?.IS_STALE ?? gate.is_stale)
+      const authorityId = auth?.AUTHORITY_ID || gate.authority_id || authorityStatus
+      if (mode !== 'OPERATOR_COMMITTED' || isStale) return
       if (!LPA_POSITIVE_AUTHORITY.has(authorityStatus)) return
       const actionStatus = String(d.status || '').toUpperCase()
       const needsApprovalChain = [
@@ -1429,7 +1433,7 @@ export default function LivePortfolioActivity() {
         'INTENT_SUBMITTED',
       ].includes(actionStatus)
       if (needsApprovalChain) {
-        const chainKey = `${d.action_id}:approve:${auth.AUTHORITY_ID || authorityStatus}`
+        const chainKey = `${d.action_id}:approve:${authorityId}`
         if (autoPriceCheckDoneRef.current[chainKey]) return
         autoPriceCheckDoneRef.current[chainKey] = true
         void advanceLiveActionAfterCommitteeApply(
@@ -1443,7 +1447,7 @@ export default function LivePortfolioActivity() {
       }
       if (!['INTENT_APPROVED', 'REVALIDATED_FAIL'].includes(actionStatus)) return
       const shadow = shadowBoardByAction[d.action_id]
-      const key = `${d.action_id}:${shadow?.sessionId || auth.SHADOW_SESSION_ID || ''}`
+      const key = `${d.action_id}:${shadow?.sessionId || auth?.SHADOW_SESSION_ID || gate.authority_id || ''}`
       if (autoPriceCheckDoneRef.current[key]) return
       autoPriceCheckDoneRef.current[key] = true
       void runRevalidateForSubmit(d.action_id)

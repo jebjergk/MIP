@@ -1406,6 +1406,21 @@ def _required_next_step_structural_entry(
         elif not authority_status:
             return "Run Agentic Review"
 
+    if (
+        authority_mode == "OPERATOR_COMMITTED"
+        and authority_status in ("AGENTIC_APPROVE", "AGENTIC_APPROVE_REDUCED")
+        and not is_stale
+    ):
+        if status_upper in (
+            "READY_FOR_APPROVAL_FLOW",
+            "PM_ACCEPTED",
+            "COMPLIANCE_APPROVED",
+            "INTENT_SUBMITTED",
+        ):
+            return "Approval chain and price check — refresh if this step is stuck"
+        if status_upper == "OPEN_ELIGIBLE":
+            return "Opening guard passed — approval and price check next"
+
     if status_upper in (
         "RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION",
         "OPEN_ELIGIBLE", "OPEN_CAUTION", "READY_FOR_APPROVAL_FLOW",
@@ -10608,6 +10623,106 @@ def _try_agentic_materializer_after_opening_clear(cur, action_id: str) -> dict |
         return {"ran": False, "reason": "materializer_error", "error": str(exc), "status": status}
     finally:
         raw.autocommit(True)
+
+
+_POST_AGENTIC_AUTO_ADVANCE_STATUSES = frozenset({
+    "READY_FOR_APPROVAL_FLOW",
+    "PM_ACCEPTED",
+    "COMPLIANCE_APPROVED",
+    "INTENT_SUBMITTED",
+    "INTENT_APPROVED",
+    "REVALIDATED_FAIL",
+})
+
+
+def _try_auto_advance_structural_entry_after_agentic_commit(
+    action_id: str,
+    commit_result: dict | None = None,
+) -> dict | None:
+    """Server-side Phase 5 chain: after OPERATOR_COMMITTED, run approve-flow + revalidate.
+
+    The LPA UI also attempts this in a useEffect, but that only fires when the
+    browser still holds shadow poll state. Shadow completion + auto-commit often
+    happen while the operator is on another tab or after a refresh — leaving
+    LIVE_ACTIONS stuck at READY_FOR_APPROVAL_FLOW despite a committed APPROVE
+    verdict. This hook closes that gap without requiring Submit.
+    """
+    if not action_id:
+        return None
+    try:
+        from app.committee.agentic_authority import POSITIVE_AUTHORITY_STATUSES
+    except Exception as imp_exc:  # noqa: BLE001
+        _log.warning(
+            "auto_advance_post_commit: import failed action=%s: %s",
+            action_id,
+            imp_exc,
+        )
+        return None
+
+    commit_result = commit_result or {}
+    authority_status = str(commit_result.get("authority_status") or "").upper()
+    if authority_status not in POSITIVE_AUTHORITY_STATUSES:
+        return {"ran": False, "reason": "non_positive_authority", "authority_status": authority_status}
+
+    action = _fetch_live_action_state(action_id)
+    if not action:
+        return {"ran": False, "reason": "action_not_found"}
+    if not is_structural_live_action(action):
+        return {"ran": False, "reason": "non_structural"}
+    exec_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+    if exec_intent == "EXIT":
+        return {"ran": False, "reason": "exit_action"}
+
+    status = str(action.get("STATUS") or "").upper()
+    if status not in _POST_AGENTIC_AUTO_ADVANCE_STATUSES:
+        return {"ran": False, "reason": "status_not_eligible", "status": status}
+
+    steps: list[str] = []
+    try:
+        if status in ("READY_FOR_APPROVAL_FLOW", "PM_ACCEPTED", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED"):
+            approve_live_decision_flow(action_id, ApproveLiveDecisionRequest())
+            steps.append("approve_flow")
+            action = _fetch_live_action_state(action_id) or action
+            status = str(action.get("STATUS") or "").upper()
+
+        if status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS"):
+            revalidate_live_action(
+                action_id,
+                RevalidateLiveActionRequest(force_refresh_1m=True),
+            )
+            steps.append("revalidate")
+            action = _fetch_live_action_state(action_id) or action
+            status = str(action.get("STATUS") or "").upper()
+
+        return {
+            "ran": True,
+            "steps": steps,
+            "status": status,
+            "revalidation_outcome": action.get("REVALIDATION_OUTCOME"),
+        }
+    except HTTPException as http_exc:
+        detail = http_exc.detail
+        _log.info(
+            "auto_advance_post_commit: blocked action=%s steps=%s detail=%s",
+            action_id,
+            steps,
+            detail,
+        )
+        return {
+            "ran": bool(steps),
+            "steps": steps,
+            "status": status,
+            "blocked": True,
+            "detail": detail,
+        }
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "auto_advance_post_commit: failed action=%s steps=%s: %s",
+            action_id,
+            steps,
+            exc,
+        )
+        return {"ran": bool(steps), "steps": steps, "status": status, "error": str(exc)}
 
 
 @router.post("/trades/actions/{action_id}/opening/validate")

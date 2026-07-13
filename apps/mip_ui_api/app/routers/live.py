@@ -10626,6 +10626,11 @@ def _try_agentic_materializer_after_opening_clear(cur, action_id: str) -> dict |
 
 
 _POST_AGENTIC_AUTO_ADVANCE_STATUSES = frozenset({
+    "OPEN_ELIGIBLE",
+    "OPEN_CAUTION",
+    "OPEN_BLOCKED",
+    "PENDING_OPEN_STABILITY_REVIEW",
+    "PENDING_OPEN_VALIDATION",
     "READY_FOR_APPROVAL_FLOW",
     "PM_ACCEPTED",
     "COMPLIANCE_APPROVED",
@@ -10679,6 +10684,38 @@ def _try_auto_advance_structural_entry_after_agentic_commit(
 
     steps: list[str] = []
     try:
+        if status == "OPEN_BLOCKED":
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                action_row = _fetch_live_action(cur, action_id)
+                if action_row:
+                    gate = _run_opening_sanity_gate(
+                        cur,
+                        action_row,
+                        force_refresh_1m=True,
+                        now_utc=datetime.now(timezone.utc),
+                    )
+                    action = _fetch_live_action(cur, action_id) or action
+                    status = str(action.get("STATUS") or gate.get("result") or "").upper()
+                    steps.append("opening_validate")
+                    if status != "OPEN_BLOCKED":
+                        mat = _try_agentic_materializer_after_opening_clear(cur, action_id)
+                        if mat:
+                            steps.append("opening_materializer")
+                        action = _fetch_live_action(cur, action_id) or action
+                        status = str(action.get("STATUS") or "").upper()
+            finally:
+                conn.close()
+            if status == "OPEN_BLOCKED":
+                return {
+                    "ran": bool(steps),
+                    "steps": steps,
+                    "status": status,
+                    "blocked": True,
+                    "detail": "opening_guard_still_blocked",
+                }
+
         if status in ("READY_FOR_APPROVAL_FLOW", "PM_ACCEPTED", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED"):
             approve_live_decision_flow(action_id, ApproveLiveDecisionRequest())
             steps.append("approve_flow")

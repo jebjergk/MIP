@@ -1053,8 +1053,10 @@ def _auto_promote_eligible(audit_result: Dict[str, Any]) -> Tuple[bool, str]:
     # pack version is outside the supported set; never promote those.
     if audit_result.get("pack_version_ok") is False:
         return False, "PACK_VERSION_UNSUPPORTED"
-    if audit_result.get("shadow_degraded"):
-        return False, "SHADOW_DEGRADED"
+    # Specialist-level degradation (DEGRADED flag / STATUS=DEGRADED) does not
+    # void a completed chair APPROVE / APPROVE_REDUCED verdict — see
+    # map_shadow_to_authority_status. Positive authority_status above already
+    # implies stage 5 + a recognized chair stance.
     if not audit_result.get("action_id"):
         return False, "NO_ACTION_ID"
     if not audit_result.get("session_id"):
@@ -1074,7 +1076,8 @@ def auto_promote_authority_to_operator_committed(
     when the system can do so safely without operator interaction.
 
     Strict eligibility (see `_auto_promote_eligible`): APPROVE / APPROVE_REDUCED
-    only, not stale, pack version supported, not degraded. Anything else stays
+    only, not stale, pack version supported. DEGRADED specialist runs with a
+    completed chair APPROVE / APPROVE_REDUCED still auto-promote. Anything else stays
     in AUTO_AUDIT and the operator must explicitly click "Apply Agentic
     Review" (or equivalent override path).
 

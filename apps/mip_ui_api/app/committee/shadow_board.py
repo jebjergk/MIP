@@ -1583,13 +1583,13 @@ def _auto_audit_authority_after_finalize(
     Stage 4b: writes one AUTHORITY_MODE=AUTO_AUDIT row gated by
     AGENTIC_AUTO_AUDIT_ENABLED.
 
-    Phase 5C: when the AUTO_AUDIT row carries a clean APPROVE / APPROVE_REDUCED
-    verdict on a fresh non-degraded session with a supported pack version, the
-    hook immediately promotes it to AUTHORITY_MODE=OPERATOR_COMMITTED with
-    actor=`system_auto_commit_v1`. This removes the manual "Apply Agentic
-    Review" click for the happy path. Auto-promote is gated by
-    AGENTIC_AUTO_COMMIT_ENABLED and fail-closed on every non-approve status,
-    staleness, degraded session, unsupported pack version, or DB error.
+    Phase 5C: when the AUTO_AUDIT row carries APPROVE / APPROVE_REDUCED on a
+    fresh session with a supported pack version, the hook immediately promotes
+    it to AUTHORITY_MODE=OPERATOR_COMMITTED with actor=`system_auto_commit_v1`.
+    Specialist-level DEGRADED does not block auto-promote when the chair
+    finished with APPROVE / APPROVE_REDUCED. Auto-promote is gated by
+    AGENTIC_AUTO_COMMIT_ENABLED and fail-closed on non-approve status,
+    staleness, unsupported pack version, or DB error.
 
     Always fail-closed: any exception is logged but never propagated. Never
     touches LIVE_ACTIONS directly, Submit gating, LPA, or COMMITTEE_FINAL_DECISION.

@@ -103,6 +103,28 @@ class ShadowIntradaySessionTests(unittest.TestCase):
         self.assertFalse(pic["session_available"])
         self.assertEqual(pic["reason"], "BEFORE_RTH_OPEN")
 
+    def test_early_session_single_rth_bar_is_available_low_sample(self):
+        snap = {
+            "SYMBOL": "CLF",
+            "SIDE": "LONG",
+            "ENTRY_ZONE_JSON": {"low": 9.0, "high": 10.0},
+            "INVALIDATION_JSON": {"level": 8.0, "rule": "BELOW"},
+        }
+        bars = [{"TS": datetime(2026, 7, 6, 9, 30, 0), "OPEN": 9.5, "HIGH": 9.6, "LOW": 9.4, "CLOSE": 9.55}]
+        now = datetime(2026, 7, 6, 9, 36, 0)
+        pic = build_shadow_intraday_session_picture(
+            symbol="CLF",
+            side="LONG",
+            snapshot=snap,
+            dossier_payload={},
+            bar_rows=bars,
+            now=now,
+            fetch_meta={"status": "SUCCESS"},
+        )
+        self.assertTrue(pic["session_available"])
+        self.assertTrue(pic["low_sample_warning"])
+        self.assertEqual(pic["bar_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

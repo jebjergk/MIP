@@ -148,10 +148,10 @@ def fetch_rth_15m_bars(
     filtered, _ = filter_bars_rth_since_open(shaped)
     meta["raw_bar_count"] = len(shaped)
     meta["rth_bar_count"] = len(filtered)
-    if len(shaped) > 0 and len(filtered) < 2:
-        meta["status"] = "FILTERED_EMPTY"
-    elif len(filtered) >= 2:
+    if len(filtered) >= 1:
         meta["status"] = "SUCCESS"
+    elif len(shaped) > 0:
+        meta["status"] = "FILTERED_EMPTY"
     return filtered, meta
 
 
@@ -328,7 +328,7 @@ def build_shadow_intraday_session_picture(
         rows, _ = filter_bars_rth_since_open(rows, now=now_et)
         meta = fetch_meta or {"status": "PROVIDED_BARS"}
 
-    if len(rows) < 2:
+    if len(rows) < 1:
         reason = "INSUFFICIENT_RTH_BARS"
         if meta and meta.get("status") == "FETCH_FAILED":
             reason = "IB_FETCH_FAILED"

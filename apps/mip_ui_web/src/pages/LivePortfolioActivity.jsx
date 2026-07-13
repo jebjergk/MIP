@@ -580,10 +580,40 @@ export default function LivePortfolioActivity() {
   const advanceLiveActionAfterCommitteeApply = useCallback(
     async (actionId, applyData, opts = {}) => {
       const isStructuralC20Flow = Boolean(opts.isStructuralC20Flow)
-      const nextStatus = String(applyData?.action_status || '').toUpperCase()
-      const canRunApproveFlow = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED'].includes(
-        nextStatus,
-      )
+      let nextStatus = String(applyData?.action_status || '').toUpperCase()
+
+      if (nextStatus === 'OPEN_BLOCKED') {
+        setStreamStatus('Rechecking opening guard...')
+        setLiveLineTarget('Agentic verdict committed — rechecking opening guard before price check...')
+        const openingResp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/opening/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force_refresh_1m: true }),
+        })
+        const openingBody = await openingResp.json().catch(() => null)
+        if (!openingResp.ok) {
+          throw new Error(messageFromApiFailure(openingBody, 'Opening guard recheck is currently blocked.'))
+        }
+        nextStatus = String(openingBody?.status || '').toUpperCase()
+        if (nextStatus === 'OPEN_BLOCKED') {
+          await load({ silent: true })
+          setLiveLineTarget('Opening guard still blocked — retry when the market is open.')
+          setStreamStatus('Opening guard blocked')
+          setActiveStreamActionId('')
+          return
+        }
+      }
+
+      const canRunApproveFlow = [
+        'READY_FOR_APPROVAL_FLOW',
+        'PM_ACCEPTED',
+        'COMPLIANCE_APPROVED',
+        'INTENT_SUBMITTED',
+        'OPEN_ELIGIBLE',
+        'OPEN_CAUTION',
+        'PENDING_OPEN_STABILITY_REVIEW',
+        'PENDING_OPEN_VALIDATION',
+      ].includes(nextStatus)
       if (canRunApproveFlow) {
         setStreamStatus('Advancing approval flow...')
         setLiveLineTarget(
@@ -1014,6 +1044,20 @@ export default function LivePortfolioActivity() {
             fetchedAt: new Date().toISOString(),
           },
         }))
+        const advancedStatus = String(
+          body?.auto_advance?.status
+          || body?.agentic_materializer?.status
+          || '',
+        ).toUpperCase()
+        if (advancedStatus !== 'REVALIDATED_PASS') {
+          await advanceLiveActionAfterCommitteeApply(
+            actionId,
+            { action_status: advancedStatus || 'READY_FOR_APPROVAL_FLOW' },
+            { isStructuralC20Flow: true },
+          )
+        } else {
+          await load({ silent: true })
+        }
       } catch (e) {
         setAgenticAuthorityByAction((prev) => ({
           ...prev,
@@ -1026,7 +1070,7 @@ export default function LivePortfolioActivity() {
         setAgenticCommitBusyByAction((prev) => ({ ...prev, [actionId]: false }))
       }
     },
-    [shadowBoardByAction],
+    [shadowBoardByAction, advanceLiveActionAfterCommitteeApply, load],
   )
 
   /**
@@ -1409,10 +1453,23 @@ export default function LivePortfolioActivity() {
     }
   }, [load, advanceLiveActionAfterCommitteeApply])
 
-  // Phase 5 UX: after auto-commit (or manual confirm) on APPROVE, chain price check.
+  // Phase 5 UX: after auto-commit (or manual confirm) on APPROVE, chain opening
+  // guard (if needed), approval flow, and price check.
   // Prefer overview's agentic_authority_gate (always loaded with pending rows);
   // fall back to the separate authority fetch when shadow poll populated it.
   useEffect(() => {
+    const APPROVAL_CHAIN_STATUSES = [
+      'READY_FOR_APPROVAL_FLOW',
+      'PM_ACCEPTED',
+      'COMPLIANCE_APPROVED',
+      'INTENT_SUBMITTED',
+      'OPEN_ELIGIBLE',
+      'OPEN_CAUTION',
+      'PENDING_OPEN_STABILITY_REVIEW',
+      'PENDING_OPEN_VALIDATION',
+    ]
+    const REVALIDATE_CHAIN_STATUSES = ['INTENT_APPROVED', 'REVALIDATED_FAIL']
+
     const rows = overview?.pending_decisions || []
     rows.forEach((d) => {
       const isEntry = Boolean(d.structural) && String(d.action_intent || '').toUpperCase() !== 'EXIT'
@@ -1426,13 +1483,18 @@ export default function LivePortfolioActivity() {
       if (mode !== 'OPERATOR_COMMITTED' || isStale) return
       if (!LPA_POSITIVE_AUTHORITY.has(authorityStatus)) return
       const actionStatus = String(d.status || '').toUpperCase()
-      const needsApprovalChain = [
-        'READY_FOR_APPROVAL_FLOW',
-        'PM_ACCEPTED',
-        'COMPLIANCE_APPROVED',
-        'INTENT_SUBMITTED',
-      ].includes(actionStatus)
-      if (needsApprovalChain) {
+
+      if (actionStatus === 'OPEN_BLOCKED') {
+        const openingKey = `${d.action_id}:opening:${authorityId}`
+        if (autoPriceCheckDoneRef.current[openingKey]) return
+        autoPriceCheckDoneRef.current[openingKey] = true
+        void runOpeningValidation(d.action_id).catch(() => {
+          delete autoPriceCheckDoneRef.current[openingKey]
+        })
+        return
+      }
+
+      if (APPROVAL_CHAIN_STATUSES.includes(actionStatus)) {
         const chainKey = `${d.action_id}:approve:${authorityId}`
         if (autoPriceCheckDoneRef.current[chainKey]) return
         autoPriceCheckDoneRef.current[chainKey] = true
@@ -1445,14 +1507,15 @@ export default function LivePortfolioActivity() {
         })
         return
       }
-      if (!['INTENT_APPROVED', 'REVALIDATED_FAIL'].includes(actionStatus)) return
+
+      if (!REVALIDATE_CHAIN_STATUSES.includes(actionStatus)) return
       const shadow = shadowBoardByAction[d.action_id]
       const key = `${d.action_id}:${shadow?.sessionId || auth?.SHADOW_SESSION_ID || gate.authority_id || ''}`
       if (autoPriceCheckDoneRef.current[key]) return
       autoPriceCheckDoneRef.current[key] = true
       void runRevalidateForSubmit(d.action_id)
     })
-  }, [overview, agenticAuthorityByAction, shadowBoardByAction, runRevalidateForSubmit, advanceLiveActionAfterCommitteeApply])
+  }, [overview, agenticAuthorityByAction, shadowBoardByAction, runRevalidateForSubmit, advanceLiveActionAfterCommitteeApply, runOpeningValidation])
 
   const submitOnly = useCallback(async (actionId) => {
     // Phase 3A: real-money confirmation gate (temporary UI guard).
@@ -2031,10 +2094,18 @@ export default function LivePortfolioActivity() {
                       ].includes(statusUpper)
                       const agenticGate = d.agentic_authority_gate || {}
                       const agenticGateOk = Boolean(agenticGate.gate_ok)
+                      const authorityStatusForRow = String(
+                        agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_STATUS
+                        || agenticGate.authority_status
+                        || '',
+                      ).toUpperCase()
                       const operatorCommittedPositive = (
-                        String(agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE || '').toUpperCase()
-                          === 'OPERATOR_COMMITTED'
-                        && !agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE
+                        String(
+                          agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE
+                          || agenticGate.authority_mode
+                          || '',
+                        ).toUpperCase() === 'OPERATOR_COMMITTED'
+                        && !(agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE ?? agenticGate.is_stale)
                         && LPA_POSITIVE_AUTHORITY.has(authorityStatusForRow)
                       )
                       const canRunOpeningRecheck = (
@@ -2058,9 +2129,15 @@ export default function LivePortfolioActivity() {
                         'REVALIDATED_FAIL',
                         'REVALIDATED_PASS',
                       ].includes(statusUpper)
-                      const authorityStatusForRow = String(
-                        agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_STATUS || '',
+                      const authorityModeForRow = String(
+                        agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE
+                        || agenticGate.authority_mode
+                        || '',
                       ).toUpperCase()
+                      const operatorCommittedForRow = (
+                        authorityModeForRow === 'OPERATOR_COMMITTED'
+                        && !(agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE ?? agenticGate.is_stale)
+                      )
                       return (
                     <Fragment>
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
@@ -2716,11 +2793,7 @@ export default function LivePortfolioActivity() {
                                 || String(shadowBoardByAction[d.action_id]?.status || '').toUpperCase() === 'RUNNING'
                               ),
                               authorityStatus: authorityStatusForRow,
-                              isOperatorCommitted: (
-                                String(agenticAuthorityByAction[d.action_id]?.authority?.AUTHORITY_MODE || '').toUpperCase()
-                                  === 'OPERATOR_COMMITTED'
-                                && !agenticAuthorityByAction[d.action_id]?.authority?.IS_STALE
-                              ),
+                              isOperatorCommitted: operatorCommittedForRow,
                             })}
                             statusUpper={statusUpper}
                           />

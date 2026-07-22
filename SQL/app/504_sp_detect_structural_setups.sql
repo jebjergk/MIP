@@ -78,35 +78,67 @@ BEGIN
       ON st.SYMBOL = b.SYMBOL AND st.MARKET_TYPE = b.MARKET_TYPE AND st.AS_OF_DATE = :v_as_of
     LEFT JOIN MIP.APP.STRUCTURAL_REGIME_TAG rg
       ON rg.SYMBOL = b.SYMBOL AND rg.MARKET_TYPE = b.MARKET_TYPE AND rg.AS_OF_DATE = :v_as_of
+    -- Phase 8 coherence fix: pick the nearest support AT OR BELOW today's close
+    -- (SR semantics: support sits below price) instead of the top-3 by
+    -- significance. Ties broken by significance to prefer touched zones.
+    -- Falls back to any nearest support if none sit below (rare — e.g. price
+    -- broke a support today and has not re-established one).
     LEFT JOIN (
-        SELECT SYMBOL, MARKET_TYPE, LEVEL_PRICE, LEVEL_LOW, LEVEL_HIGH, LEVEL_SIGNIFICANCE,
-            ROW_NUMBER() OVER (PARTITION BY SYMBOL, MARKET_TYPE ORDER BY LEVEL_SIGNIFICANCE DESC) AS RK
-        FROM MIP.APP.STRUCTURAL_LEVEL_CACHE
-        WHERE AS_OF_DATE = :v_as_of AND LEVEL_TYPE = 'SUPPORT_ZONE'
-          AND (:P_SYMBOL IS NULL OR SYMBOL = :P_SYMBOL)
-    ) sz ON sz.SYMBOL = b.SYMBOL AND sz.MARKET_TYPE = b.MARKET_TYPE AND sz.RK <= 3
+        SELECT c.SYMBOL, c.MARKET_TYPE, c.LEVEL_PRICE, c.LEVEL_LOW, c.LEVEL_HIGH,
+               c.LEVEL_SIGNIFICANCE
+        FROM MIP.APP.STRUCTURAL_LEVEL_CACHE c
+        JOIN (
+            SELECT SYMBOL, MARKET_TYPE, MAX(TS) AS LATEST_TS
+            FROM MIP.MART.MARKET_BARS
+            WHERE INTERVAL_MINUTES = 1440 AND TS <= :v_as_of
+              AND (:P_SYMBOL IS NULL OR SYMBOL = :P_SYMBOL)
+            GROUP BY SYMBOL, MARKET_TYPE
+        ) lb ON lb.SYMBOL = c.SYMBOL AND lb.MARKET_TYPE = c.MARKET_TYPE
+        JOIN MIP.MART.MARKET_BARS mb
+          ON mb.SYMBOL = lb.SYMBOL AND mb.MARKET_TYPE = lb.MARKET_TYPE
+         AND mb.TS = lb.LATEST_TS AND mb.INTERVAL_MINUTES = 1440
+        WHERE c.AS_OF_DATE = :v_as_of AND c.LEVEL_TYPE = 'SUPPORT_ZONE'
+          AND (:P_SYMBOL IS NULL OR c.SYMBOL = :P_SYMBOL)
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY c.SYMBOL, c.MARKET_TYPE
+            ORDER BY
+                CASE WHEN c.LEVEL_HIGH <= mb.CLOSE THEN 0 ELSE 1 END,
+                ABS(mb.CLOSE - c.LEVEL_PRICE),
+                c.LEVEL_SIGNIFICANCE DESC
+        ) = 1
+    ) sz ON sz.SYMBOL = b.SYMBOL AND sz.MARKET_TYPE = b.MARKET_TYPE
+    -- Phase 8 coherence fix: pick the nearest resistance AT OR ABOVE today's
+    -- close (SR semantics: resistance sits above price). Same tie-break rules.
     LEFT JOIN (
-        SELECT SYMBOL, MARKET_TYPE, LEVEL_PRICE, LEVEL_LOW, LEVEL_HIGH, LEVEL_SIGNIFICANCE,
-            ROW_NUMBER() OVER (PARTITION BY SYMBOL, MARKET_TYPE ORDER BY LEVEL_SIGNIFICANCE DESC) AS RK
-        FROM MIP.APP.STRUCTURAL_LEVEL_CACHE
-        WHERE AS_OF_DATE = :v_as_of AND LEVEL_TYPE = 'RESISTANCE_ZONE'
-          AND (:P_SYMBOL IS NULL OR SYMBOL = :P_SYMBOL)
-    ) rz ON rz.SYMBOL = b.SYMBOL AND rz.MARKET_TYPE = b.MARKET_TYPE AND rz.RK <= 3
+        SELECT c.SYMBOL, c.MARKET_TYPE, c.LEVEL_PRICE, c.LEVEL_LOW, c.LEVEL_HIGH,
+               c.LEVEL_SIGNIFICANCE
+        FROM MIP.APP.STRUCTURAL_LEVEL_CACHE c
+        JOIN (
+            SELECT SYMBOL, MARKET_TYPE, MAX(TS) AS LATEST_TS
+            FROM MIP.MART.MARKET_BARS
+            WHERE INTERVAL_MINUTES = 1440 AND TS <= :v_as_of
+              AND (:P_SYMBOL IS NULL OR SYMBOL = :P_SYMBOL)
+            GROUP BY SYMBOL, MARKET_TYPE
+        ) lb ON lb.SYMBOL = c.SYMBOL AND lb.MARKET_TYPE = c.MARKET_TYPE
+        JOIN MIP.MART.MARKET_BARS mb
+          ON mb.SYMBOL = lb.SYMBOL AND mb.MARKET_TYPE = lb.MARKET_TYPE
+         AND mb.TS = lb.LATEST_TS AND mb.INTERVAL_MINUTES = 1440
+        WHERE c.AS_OF_DATE = :v_as_of AND c.LEVEL_TYPE = 'RESISTANCE_ZONE'
+          AND (:P_SYMBOL IS NULL OR c.SYMBOL = :P_SYMBOL)
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY c.SYMBOL, c.MARKET_TYPE
+            ORDER BY
+                CASE WHEN c.LEVEL_LOW >= mb.CLOSE THEN 0 ELSE 1 END,
+                ABS(c.LEVEL_PRICE - mb.CLOSE),
+                c.LEVEL_SIGNIFICANCE DESC
+        ) = 1
+    ) rz ON rz.SYMBOL = b.SYMBOL AND rz.MARKET_TYPE = b.MARKET_TYPE
     WHERE b.RN_DESC = 1;
 
-    -- De-duplicate: keep only the closest support and resistance per symbol
+    -- Nearest-level selection is already done above per row (QUALIFY = 1),
+    -- so TMP_DET_FINAL simply mirrors TMP_DET_CONTEXT for the current bar.
     CREATE OR REPLACE TEMPORARY TABLE TMP_DET_FINAL AS
-    SELECT * FROM (
-        SELECT dc.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY dc.SYMBOL, dc.MARKET_TYPE
-                ORDER BY
-                    ABS(dc.CLOSE - COALESCE(dc.SUPPORT_PRICE, 999999)) +
-                    ABS(dc.CLOSE - COALESCE(dc.RESISTANCE_PRICE, 999999))
-            ) AS PROXIMITY_RK
-        FROM TMP_DET_CONTEXT dc
-    )
-    WHERE PROXIMITY_RK = 1;
+    SELECT * FROM TMP_DET_CONTEXT;
 
     -- ============================================================
     -- STEP 2: Detect setups — each family gated by structural state
@@ -341,7 +373,15 @@ BEGIN
       AND d.ATR_20 > 0
       AND (GREATEST(COALESCE(d.PREV1_HIGH, d.HIGH), COALESCE(d.PREV2_HIGH, d.HIGH)) - d.LOW) >= 0.5 * d.ATR_20
       -- Phase 7 PQI Fix 4 cond (2): meaningful bearish prior bar body
-      AND (d.PREV1_OPEN - d.PREV1_CLOSE) >= 0.25 * d.ATR_20;
+      AND (d.PREV1_OPEN - d.PREV1_CLOSE) >= 0.25 * d.ATR_20
+      -- Phase 8 coherence fix: for a "pullback to support" to be genuine, the
+      -- pullback low must have actually approached the support zone. Requires
+      -- support to exist and today's LOW to be within 1.5 ATR of the support
+      -- upper edge (or above/inside the zone). Without this gate,
+      -- TREND_PULLBACK_LONG can attach months-old low support to a fresh
+      -- entry zone tens of percent higher (the AAPL $244 / entry $327 bug).
+      AND d.SUPPORT_PRICE IS NOT NULL
+      AND d.LOW <= COALESCE(d.SUPPORT_HIGH, d.SUPPORT_PRICE) + 1.5 * d.ATR_20;
 
     -- ----- E. BREAKDOWN_RETEST_SHORT -----
     INSERT INTO MIP.APP.STRUCTURAL_SETUP_EVENTS (
@@ -480,7 +520,17 @@ BEGIN
     WHERE d.STRUCTURAL_STATE IN ('REVERSAL_FORMING', 'TREND_UP', 'PULLBACK_IN_TREND', 'RANGE_BOUND')
       AND d.PREV2_CLOSE > d.PREV2_OPEN   -- bar[-2] is up
       AND d.CLOSE < d.OPEN               -- bar[0] is down
-      AND d.CLOSE < COALESCE(d.PREV1_LOW, d.CLOSE + 1);
+      AND d.CLOSE < COALESCE(d.PREV1_LOW, d.CLOSE + 1)
+      -- Phase 8 coherence fix (mirrors THREE_BAR_REVERSAL_LONG): the reversal
+      -- must have actually tested resistance. Requires resistance to exist and
+      -- today's HIGH (or the 3-bar sequence high) to be within 1.5 ATR of the
+      -- resistance lower edge. If no resistance is present, the setup falls
+      -- back to today's HIGH as LEVEL_PRICE which is inherently coherent
+      -- with the [LOW,CLOSE] entry zone. This blocks the NKE $64 / entry $43
+      -- and AAPL $280 / entry $327 anchor-mismatch bugs.
+      AND (d.RESISTANCE_PRICE IS NULL
+           OR GREATEST(d.HIGH, COALESCE(d.PREV1_HIGH, d.HIGH), COALESCE(d.PREV2_HIGH, d.HIGH))
+              >= COALESCE(d.RESISTANCE_LOW, d.RESISTANCE_PRICE) - 1.5 * d.ATR_20);
 
     -- ----- H. FAILED_BREAKOUT_SHORT -----
     INSERT INTO MIP.APP.STRUCTURAL_SETUP_EVENTS (
@@ -530,6 +580,55 @@ BEGIN
       -- Current bar closed back below resistance
       AND d.CLOSE < d.RESISTANCE_PRICE
       AND d.UPPER_WICK_RATIO >= 0.25;
+
+    -- ============================================================
+    -- STEP 2b: Post-insert structural coherence cleanup (Phase 8)
+    -- ============================================================
+    -- Belt-and-braces guard against any level-anchored family whose LEVEL_PRICE
+    -- ended up far from its ENTRY_ZONE midpoint (>5% AND >3 ATR). Family-level
+    -- proximity gates above should prevent this, but if a family emits an
+    -- incoherent row anyway we mark it INVALIDATED with a specific reason
+    -- rather than let it flow into the dossier as primary evidence.
+    UPDATE MIP.APP.STRUCTURAL_SETUP_EVENTS tgt
+       SET SETUP_STATUS = 'INVALIDATED',
+           STATUS_UPDATED_AT = CURRENT_TIMESTAMP(),
+           FEATURES_JSON = OBJECT_INSERT(
+               COALESCE(tgt.FEATURES_JSON, OBJECT_CONSTRUCT()),
+               'coherence_reject',
+               OBJECT_CONSTRUCT(
+                   'reason', 'STRUCTURAL_ANCHOR_MISMATCH',
+                   'level_price', tgt.LEVEL_PRICE,
+                   'entry_mid', (tgt.ENTRY_ZONE_LOW + tgt.ENTRY_ZONE_HIGH) / 2,
+                   'gap_pct',
+                       ABS(tgt.LEVEL_PRICE - (tgt.ENTRY_ZONE_LOW + tgt.ENTRY_ZONE_HIGH) / 2)
+                       / NULLIF((tgt.ENTRY_ZONE_LOW + tgt.ENTRY_ZONE_HIGH) / 2, 0) * 100
+               ),
+               TRUE
+           )
+     WHERE tgt.SETUP_DATE = :v_as_of
+       AND (:P_SYMBOL IS NULL OR tgt.SYMBOL = :P_SYMBOL)
+       AND tgt.SETUP_STATUS = 'DETECTED'
+       AND tgt.SETUP_FAMILY IN (
+           'BREAKOUT_RETEST_LONG','SUPPORT_WICK_LONG','TREND_PULLBACK_LONG',
+           'THREE_BAR_REVERSAL_LONG','BREAKDOWN_RETEST_SHORT',
+           'RESISTANCE_WICK_SHORT','THREE_BAR_REVERSAL_SHORT',
+           'FAILED_BREAKOUT_SHORT'
+       )
+       AND tgt.LEVEL_PRICE IS NOT NULL
+       AND tgt.ENTRY_ZONE_LOW IS NOT NULL
+       AND tgt.ENTRY_ZONE_HIGH IS NOT NULL
+       AND (
+           ABS(tgt.LEVEL_PRICE - (tgt.ENTRY_ZONE_LOW + tgt.ENTRY_ZONE_HIGH) / 2)
+           / NULLIF((tgt.ENTRY_ZONE_LOW + tgt.ENTRY_ZONE_HIGH) / 2, 0) * 100
+           > 5.0
+       )
+       AND (
+           tgt.VOLATILITY_CONTEXT IS NULL
+           OR tgt.VOLATILITY_CONTEXT <= 0
+           OR ABS(tgt.LEVEL_PRICE - (tgt.ENTRY_ZONE_LOW + tgt.ENTRY_ZONE_HIGH) / 2)
+              / tgt.VOLATILITY_CONTEXT
+              > 3.0
+       );
 
     -- ============================================================
     -- STEP 3: Count inserted setups

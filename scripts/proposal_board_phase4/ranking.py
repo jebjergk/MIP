@@ -112,6 +112,77 @@ def _has_proposal_ready_active_setup(payload: Dict[str, Any], as_of: _date) -> b
     return False
 
 
+# Phase 8 coherence bookkeeping. Kept in sync with dossier + orchestrator gates.
+_OPPOSING_CONFIDENCE_THRESHOLD = 0.65
+
+
+def _primary_setup_coherent(payload: Dict[str, Any]) -> Optional[bool]:
+    """Return the LEVEL_ENTRY_COHERENT flag on the primary evidence setup.
+
+    Returns None when either no primary evidence exists or the coherence
+    field is not present in the dossier payload (older snapshots).
+    """
+    events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return None
+    primary_id = payload.get("primary_evidence_setup_event_id")
+    if primary_id is None:
+        return None
+    try:
+        pid = int(primary_id)
+    except (TypeError, ValueError):
+        return None
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        try:
+            eid = int(ev.get("setup_event_id") or -1)
+        except (TypeError, ValueError):
+            continue
+        if eid == pid:
+            val = ev.get("level_entry_coherent")
+            if val is None:
+                return None
+            return bool(val)
+    return None
+
+
+def _has_eligible_opposing_setup(payload: Dict[str, Any], as_of: _date) -> bool:  # noqa: ARG001
+    """Return True when the dossier carries both LONG and SHORT setups with
+    active-eligible status and >= threshold structure confidence.
+
+    Recency is enforced upstream: setup_events_evidence_only only lists the
+    dossier's recent-window setups. The deterministic publish gate in
+    orchestrator/566 SQL applies the exact bar-window filter; here we only
+    need to know whether any high-confidence opposing evidence is present.
+    """
+    events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return False
+    directions: set = set()
+    high_conf_dirs: set = set()
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        status = str(ev.get("setup_status") or "").upper()
+        if status not in _BOARD_ELIGIBLE_SETUP_STATUSES:
+            continue
+        d = str(ev.get("event_direction") or ev.get("direction") or "").upper()
+        if d not in {"LONG", "SHORT"}:
+            continue
+        directions.add(d)
+        try:
+            conf = float(ev.get("structure_confidence") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        if conf >= _OPPOSING_CONFIDENCE_THRESHOLD:
+            high_conf_dirs.add(d)
+    return (
+        ("LONG" in directions and "SHORT" in high_conf_dirs)
+        or ("SHORT" in directions and "LONG" in high_conf_dirs)
+    )
+
+
 def _count_setup_evidence(payload: Dict[str, Any]) -> int:
     events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
     if not isinstance(events, list):
@@ -289,6 +360,25 @@ def score_structural_appeal(
         conf_pts = min(10.0, conf * 10.0)
         score += conf_pts
         breakdown["structure_confidence_points"] = round(conf_pts, 2)
+
+    # Phase 8: demote symbols whose primary evidence setup fails the
+    # structural coherence gate (LEVEL_PRICE far from entry midpoint). These
+    # candidates typically produce anchor-mismatch proposals that get blocked
+    # at publish; downranking them reduces LLM spend on hopeless candidates.
+    coherent = _primary_setup_coherent(payload)
+    breakdown["primary_setup_coherent"] = coherent
+    if coherent is False:
+        score -= 40.0
+        breakdown["primary_setup_incoherent_penalty"] = -40.0
+
+    # Phase 8: demote symbols carrying an eligible opposite-direction setup
+    # with meaningful structure confidence — chairs must explain them, and
+    # unresolved cases block publication. Small penalty (not a hard rejection).
+    opposing = _has_eligible_opposing_setup(payload, as_of)
+    breakdown["has_eligible_opposing_setup"] = opposing
+    if opposing:
+        score -= 15.0
+        breakdown["opposing_eligible_setup_penalty"] = -15.0
 
     breakdown["structural_appeal_score"] = round(score, 2)
     return round(score, 4), breakdown

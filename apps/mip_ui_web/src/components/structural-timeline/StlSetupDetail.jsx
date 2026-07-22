@@ -40,6 +40,19 @@ function dirBadge(dir) {
   return badge(d, d === 'LONG' ? 'long' : 'short')
 }
 
+// Phase 8 coherence badge: shows whether the cited LEVEL_PRICE is geometrically
+// near the entry zone midpoint. Level-anchored setups whose level sits >5% and
+// >3 ATR from entry-mid are flagged as "ANCHOR MISMATCH" so users can spot
+// dossier-narrative vs entry-geometry disagreements at a glance.
+function coherenceBadge(coherent, gapPct) {
+  if (coherent === true) return badge('COHERENT', 'success')
+  if (coherent === false) {
+    const g = gapPct != null ? ` (${Number(gapPct).toFixed(1)}%)` : ''
+    return badge(`ANCHOR MISMATCH${g}`, 'fail')
+  }
+  return badge('—', 'unknown')
+}
+
 function Row({ label, value }) {
   return (
     <>
@@ -96,6 +109,7 @@ export default function StlSetupDetail({ detail, loading, onClose, get }) {
           <div className="stl-detail-grid">
             <Row label="Level Type" value={v('LEVEL_TYPE')} />
             <Row label="Level Price" value={`$${num(v('LEVEL_PRICE'))}`} />
+            <Row label="Level Coherence" value={coherenceBadge(v('LEVEL_ENTRY_COHERENT'), v('LEVEL_TO_ENTRY_MID_PCT'))} />
             <Row label="Level Significance" value={num(v('LEVEL_SIGNIFICANCE'))} />
             <Row label="Structure Confidence" value={num(v('STRUCTURE_CONFIDENCE'))} />
             <Row label="Wick Score" value={num(v('WICK_CONFIRMATION_SCORE'))} />

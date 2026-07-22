@@ -76,13 +76,22 @@ def _short(s: Optional[str], n: int = 200) -> str:
     return s if len(s) <= n else s[:n].rstrip() + "..."
 
 
-def detect_conflicts(positions: Dict[str, Dict[str, Any]]) -> List[ConflictEntry]:
+def detect_conflicts(
+    positions: Dict[str, Dict[str, Any]],
+    evidence_json: Optional[Dict[str, Any]] = None,
+) -> List[ConflictEntry]:
     """
     Inspect the 5 specialist positions for ONE dossier and return a list
     of structured conflicts. Empty list = no conflicts found.
 
-    `positions` keys are role names: MARKET_STRUCTURE, LEVEL_PRICE_ACTION,
+    `positions` keys are role names: MARKET_STRUCTURA, LEVEL_PRICE_ACTION,
     THESIS, HISTORICAL_EVIDENCE, RISK_EXECUTION.
+
+    `evidence_json` is the dossier payload (optional). When provided,
+    additional evidence-level conflicts are detected — currently the
+    OPPOSING_SETUP_UNRESOLVED rule, which fires when THESIS points one
+    way but the dossier carries an eligible opposite-direction setup with
+    meaningful structure confidence.
     """
     out: List[ConflictEntry] = []
 
@@ -170,7 +179,81 @@ def detect_conflicts(positions: Dict[str, Dict[str, Any]]) -> List[ConflictEntry
             ),
         ))
 
+    # 4) THESIS direction vs eligible opposite-direction setup in dossier
+    if thesis_v in _THESIS_DIRECTIONAL and isinstance(evidence_json, dict):
+        thesis_dir = "LONG" if thesis_v in _THESIS_LONG else "SHORT"
+        opposing = _find_eligible_opposing_setup(evidence_json, thesis_dir)
+        if opposing:
+            out.append(ConflictEntry(
+                source_role="EVIDENCE",
+                target_role="THESIS",
+                topic="OPPOSING_SETUP_UNRESOLVED",
+                disagreement_type="EVIDENCE_CONFLICT",
+                challenge_text=(
+                    f"THESIS argues {thesis_dir} but the dossier carries an eligible "
+                    f"opposite-direction setup: setup_event_id="
+                    f"{opposing.get('setup_event_id')} "
+                    f"{opposing.get('setup_family')} "
+                    f"({opposing.get('setup_status')}) with structure_confidence="
+                    f"{opposing.get('structure_confidence')}. Defend why the "
+                    f"{thesis_dir} thesis outweighs this opposing evidence, or "
+                    "revise to WATCH."
+                ),
+            ))
+
     return out
+
+
+# Structure_confidence and bar-window thresholds for the OPPOSING_SETUP gate.
+# Kept in sync with the deterministic UNRESOLVED_OPPOSING_SETUP publish gate in
+# orchestrator._publish_to_structural / 566 SQL SP.
+_OPPOSING_CONFIDENCE_THRESHOLD = 0.65
+_OPPOSING_MAX_AGE_BARS = 3
+_ELIGIBLE_STATUSES = {"DETECTED", "ELIGIBLE", "WAITING"}
+
+
+def _find_eligible_opposing_setup(
+    evidence_json: Dict[str, Any],
+    thesis_direction: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the freshest eligible opposite-direction setup, or None.
+
+    Reads EVIDENCE_JSON.setup_events_evidence_only (list) and picks the row
+    with DIRECTION != thesis_direction, an active-eligible status, structure
+    confidence >= threshold, within the recent-bars window.
+    """
+    setup_events = evidence_json.get("setup_events_evidence_only") or []
+    if not isinstance(setup_events, list):
+        return None
+
+    opposite = "SHORT" if thesis_direction == "LONG" else "LONG"
+    best: Optional[Dict[str, Any]] = None
+    best_setup_id: int = -1
+
+    for se in setup_events:
+        if not isinstance(se, dict):
+            continue
+        if str(se.get("event_direction") or se.get("direction") or "").upper() != opposite:
+            continue
+        status = str(se.get("setup_status") or "").upper()
+        if status not in _ELIGIBLE_STATUSES:
+            continue
+        conf = se.get("structure_confidence")
+        try:
+            if conf is None or float(conf) < _OPPOSING_CONFIDENCE_THRESHOLD:
+                continue
+        except (TypeError, ValueError):
+            continue
+        setup_id_raw = se.get("setup_event_id")
+        try:
+            setup_id = int(setup_id_raw) if setup_id_raw is not None else -1
+        except (TypeError, ValueError):
+            setup_id = -1
+        if setup_id > best_setup_id:
+            best = se
+            best_setup_id = setup_id
+
+    return best
 
 
 def detect_stance_drift(

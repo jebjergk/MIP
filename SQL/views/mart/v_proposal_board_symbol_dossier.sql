@@ -529,6 +529,60 @@ actionability_context AS (
     LEFT JOIN candle_psychology cp
       ON cp.SYMBOL = u.SYMBOL AND cp.MARKET_TYPE = u.MARKET_TYPE
 ),
+-- Phase 8 coherence enrichment: compute per-setup level<->entry coherence
+-- metrics inline so the dossier can (a) expose them to the agent panel and
+-- (b) prefer coherent setups when picking primary evidence.
+-- Level-anchored families: LEVEL_PRICE must be near entry midpoint. Other
+-- families (e.g. pattern-only) always coherent.
+setup_events_enriched AS (
+    SELECT
+        s.*,
+        (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0 AS ENTRY_MID,
+        CASE
+            WHEN s.LEVEL_PRICE IS NULL
+              OR s.ENTRY_ZONE_LOW IS NULL
+              OR s.ENTRY_ZONE_HIGH IS NULL
+              OR (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) <= 0
+            THEN NULL
+            ELSE ABS(s.LEVEL_PRICE - (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0)
+                 / NULLIF((s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0, 0) * 100.0
+        END AS LEVEL_TO_ENTRY_MID_PCT,
+        CASE
+            WHEN s.LEVEL_PRICE IS NULL
+              OR s.ENTRY_ZONE_LOW IS NULL
+              OR s.ENTRY_ZONE_HIGH IS NULL
+              OR s.VOLATILITY_CONTEXT IS NULL
+              OR s.VOLATILITY_CONTEXT <= 0
+            THEN NULL
+            ELSE ABS(s.LEVEL_PRICE - (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0)
+                 / s.VOLATILITY_CONTEXT
+        END AS LEVEL_TO_ENTRY_MID_ATR,
+        CASE
+            WHEN s.SETUP_FAMILY NOT IN (
+                'BREAKOUT_RETEST_LONG','SUPPORT_WICK_LONG','TREND_PULLBACK_LONG',
+                'THREE_BAR_REVERSAL_LONG','BREAKDOWN_RETEST_SHORT',
+                'RESISTANCE_WICK_SHORT','THREE_BAR_REVERSAL_SHORT',
+                'FAILED_BREAKOUT_SHORT'
+            ) THEN TRUE
+            WHEN s.LEVEL_PRICE IS NULL OR s.ENTRY_ZONE_LOW IS NULL
+              OR s.ENTRY_ZONE_HIGH IS NULL
+              OR (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) <= 0
+            THEN NULL
+            ELSE (
+                ABS(s.LEVEL_PRICE - (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0)
+                / NULLIF((s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0, 0) * 100.0
+                <= 5.0
+                OR (
+                    s.VOLATILITY_CONTEXT IS NOT NULL AND s.VOLATILITY_CONTEXT > 0
+                    AND ABS(s.LEVEL_PRICE - (s.ENTRY_ZONE_LOW + s.ENTRY_ZONE_HIGH) / 2.0)
+                        / s.VOLATILITY_CONTEXT
+                        <= 3.0
+                )
+            )
+        END AS LEVEL_ENTRY_COHERENT
+    FROM MIP.APP.STRUCTURAL_SETUP_EVENTS s
+    WHERE s.SETUP_DATE >= DATEADD('day', -30, CURRENT_DATE())
+),
 setup_events AS (
     SELECT
         SYMBOL,
@@ -554,7 +608,21 @@ setup_events AS (
                 'trend_context_score', TREND_CONTEXT_SCORE,
                 'regime_compat', REGIME_COMPAT,
                 'risk_class_evidence', RISK_CLASS,
-                'features_json', FEATURES_JSON
+                'features_json', FEATURES_JSON,
+                'level_to_entry_mid_pct', ROUND(LEVEL_TO_ENTRY_MID_PCT, 2),
+                'level_to_entry_mid_atr', ROUND(LEVEL_TO_ENTRY_MID_ATR, 2),
+                'level_entry_coherent', LEVEL_ENTRY_COHERENT,
+                'coherence_warning',
+                    CASE
+                        WHEN LEVEL_ENTRY_COHERENT = FALSE
+                        THEN 'STALE_STRUCTURAL_ANCHOR: cited '
+                             || COALESCE(LEVEL_TYPE, 'level')
+                             || ' at $' || ROUND(LEVEL_PRICE, 2)
+                             || ' is '
+                             || ROUND(LEVEL_TO_ENTRY_MID_PCT, 1)
+                             || '% from entry midpoint $' || ROUND(ENTRY_MID, 2)
+                        ELSE NULL
+                    END
             )
         ) WITHIN GROUP (ORDER BY SETUP_DATE DESC, SETUP_EVENT_ID DESC) AS SETUP_EVENTS_JSON,
         ARRAY_AGG(
@@ -565,7 +633,8 @@ setup_events AS (
                     'setup_family', SETUP_FAMILY,
                     'setup_status', SETUP_STATUS,
                     'structure_confidence', STRUCTURE_CONFIDENCE,
-                    'regime_compat', REGIME_COMPAT
+                    'regime_compat', REGIME_COMPAT,
+                    'level_entry_coherent', LEVEL_ENTRY_COHERENT
                 ),
                 NULL)
         ) WITHIN GROUP (ORDER BY SETUP_DATE DESC, SETUP_EVENT_ID DESC) AS LONG_PATTERN_SIGNS_RAW,
@@ -577,7 +646,8 @@ setup_events AS (
                     'setup_family', SETUP_FAMILY,
                     'setup_status', SETUP_STATUS,
                     'structure_confidence', STRUCTURE_CONFIDENCE,
-                    'regime_compat', REGIME_COMPAT
+                    'regime_compat', REGIME_COMPAT,
+                    'level_entry_coherent', LEVEL_ENTRY_COHERENT
                 ),
                 NULL)
         ) WITHIN GROUP (ORDER BY SETUP_DATE DESC, SETUP_EVENT_ID DESC) AS SHORT_PATTERN_SIGNS_RAW,
@@ -594,9 +664,28 @@ setup_events AS (
                 ),
                 NULL)
         ) WITHIN GROUP (ORDER BY SETUP_DATE DESC, SETUP_EVENT_ID DESC) AS RECENT_INVALIDATED_SETUP_EVENTS_RAW,
-        MAX(IFF(SETUP_STATUS IN ('DETECTED', 'ELIGIBLE', 'WAITING', 'STALE'), SETUP_EVENT_ID, NULL)) AS PRIMARY_EVIDENCE_SETUP_EVENT_ID
-    FROM MIP.APP.STRUCTURAL_SETUP_EVENTS
-    WHERE SETUP_DATE >= DATEADD('day', -30, CURRENT_DATE())
+        -- Phase 8: PRIMARY_EVIDENCE_SETUP_EVENT_ID prefers COHERENT active
+        -- setups. If none coherent, falls back to max SETUP_EVENT_ID among
+        -- active statuses (previous behaviour) so the agent still sees a
+        -- primary pointer for reasoning, but the dossier board warning
+        -- BOTH_NO_COHERENT_PRIMARY_EVIDENCE tells the chair to treat it as
+        -- suspect.
+        MAX(IFF(
+                SETUP_STATUS IN ('DETECTED', 'ELIGIBLE', 'WAITING', 'STALE')
+                AND COALESCE(LEVEL_ENTRY_COHERENT, TRUE) = TRUE,
+                SETUP_EVENT_ID, NULL
+        )) AS PRIMARY_EVIDENCE_COHERENT_ID,
+        MAX(IFF(SETUP_STATUS IN ('DETECTED', 'ELIGIBLE', 'WAITING', 'STALE'), SETUP_EVENT_ID, NULL))
+            AS PRIMARY_EVIDENCE_ANY_ID,
+        COALESCE(
+            MAX(IFF(
+                SETUP_STATUS IN ('DETECTED', 'ELIGIBLE', 'WAITING', 'STALE')
+                AND COALESCE(LEVEL_ENTRY_COHERENT, TRUE) = TRUE,
+                SETUP_EVENT_ID, NULL
+            )),
+            MAX(IFF(SETUP_STATUS IN ('DETECTED', 'ELIGIBLE', 'WAITING', 'STALE'), SETUP_EVENT_ID, NULL))
+        ) AS PRIMARY_EVIDENCE_SETUP_EVENT_ID
+    FROM setup_events_enriched
     GROUP BY SYMBOL, MARKET_TYPE
 ),
 history_by_direction AS (
@@ -819,7 +908,13 @@ SELECT
         IFF(COALESCE(rpm.RECENT_PROPOSAL_MEMORY_JSON:active_proposals::NUMBER, 0) > 0, 'EXISTING_ACTIVE_PROPOSAL_CONTEXT', NULL),
         IFF(ARRAY_SIZE(ARRAY_COMPACT(COALESCE(se.LONG_PATTERN_SIGNS_RAW, ARRAY_CONSTRUCT()))) > 0
             AND ARRAY_SIZE(ARRAY_COMPACT(COALESCE(se.SHORT_PATTERN_SIGNS_RAW, ARRAY_CONSTRUCT()))) > 0, 'BOTH_LONG_AND_SHORT_EVIDENCE_VISIBLE', NULL),
-        IFF(NOT cfg.SHORT_LIVE_ENABLED, 'SHORT_LIVE_DISABLED_BUT_RESEARCH_VISIBLE', NULL)
+        IFF(NOT cfg.SHORT_LIVE_ENABLED, 'SHORT_LIVE_DISABLED_BUT_RESEARCH_VISIBLE', NULL),
+        -- Phase 8 coherence signal: any active setup exists but none pass the
+        -- level<->entry coherence gate. Agents should treat direction inference
+        -- from setup_events_evidence_only with strong skepticism.
+        IFF(se.PRIMARY_EVIDENCE_ANY_ID IS NOT NULL
+            AND se.PRIMARY_EVIDENCE_COHERENT_ID IS NULL,
+            'NO_COHERENT_PRIMARY_EVIDENCE', NULL)
     )) AS BOARD_WARNING_FLAGS,
     se.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
     SHA2(TO_JSON(OBJECT_CONSTRUCT_KEEP_NULL(

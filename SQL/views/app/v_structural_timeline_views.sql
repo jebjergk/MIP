@@ -180,6 +180,45 @@ SELECT
     sp.IS_RESEARCH_ONLY,
     CASE WHEN sp.PROPOSAL_ID IS NOT NULL THEN TRUE ELSE FALSE END AS BECAME_PROPOSAL,
 
+    -- Phase 8: structural coherence signal for the UI. LEVEL_TO_ENTRY_MID_PCT
+    -- and LEVEL_ENTRY_COHERENT let StlSetupDetail render a badge next to the
+    -- level; family-only setups (non-level-anchored) always report coherent.
+    CASE
+        WHEN se.LEVEL_PRICE IS NULL
+          OR se.ENTRY_ZONE_LOW IS NULL
+          OR se.ENTRY_ZONE_HIGH IS NULL
+          OR (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) <= 0
+        THEN NULL
+        ELSE ROUND(
+            ABS(se.LEVEL_PRICE - (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0)
+            / NULLIF((se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0, 0) * 100.0,
+            2
+        )
+    END                                              AS LEVEL_TO_ENTRY_MID_PCT,
+    CASE
+        WHEN se.SETUP_FAMILY NOT IN (
+            'BREAKOUT_RETEST_LONG','SUPPORT_WICK_LONG','TREND_PULLBACK_LONG',
+            'THREE_BAR_REVERSAL_LONG','BREAKDOWN_RETEST_SHORT',
+            'RESISTANCE_WICK_SHORT','THREE_BAR_REVERSAL_SHORT',
+            'FAILED_BREAKOUT_SHORT'
+        ) THEN TRUE
+        WHEN se.LEVEL_PRICE IS NULL OR se.ENTRY_ZONE_LOW IS NULL
+          OR se.ENTRY_ZONE_HIGH IS NULL
+          OR (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) <= 0
+        THEN NULL
+        ELSE (
+            ABS(se.LEVEL_PRICE - (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0)
+            / NULLIF((se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0, 0) * 100.0
+            <= 5.0
+            OR (
+                se.VOLATILITY_CONTEXT IS NOT NULL AND se.VOLATILITY_CONTEXT > 0
+                AND ABS(se.LEVEL_PRICE - (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0)
+                    / se.VOLATILITY_CONTEXT
+                    <= 3.0
+            )
+        )
+    END                                              AS LEVEL_ENTRY_COHERENT,
+
     -- Backend-driven plain-language narrative
     CASE se.SETUP_FAMILY
         WHEN 'BREAKOUT_RETEST_LONG' THEN
@@ -237,6 +276,41 @@ SELECT
             || '. Entry zone: $' || ROUND(se.ENTRY_ZONE_LOW, 2) || ' – $' || ROUND(se.ENTRY_ZONE_HIGH, 2)
             || '. State: ' || COALESCE(se.STRUCTURAL_STATE, '—')
             || '. Regime: ' || COALESCE(se.REGIME_COMPAT, '—') || '.'
+    END
+    -- Phase 8: append a coherence warning when the cited level sits far from
+    -- the entry midpoint. Keeps narrative honest without over-suppressing rows.
+    || CASE
+        WHEN se.LEVEL_PRICE IS NOT NULL
+         AND se.ENTRY_ZONE_LOW IS NOT NULL
+         AND se.ENTRY_ZONE_HIGH IS NOT NULL
+         AND (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) > 0
+         AND se.SETUP_FAMILY IN (
+             'BREAKOUT_RETEST_LONG','SUPPORT_WICK_LONG','TREND_PULLBACK_LONG',
+             'THREE_BAR_REVERSAL_LONG','BREAKDOWN_RETEST_SHORT',
+             'RESISTANCE_WICK_SHORT','THREE_BAR_REVERSAL_SHORT',
+             'FAILED_BREAKOUT_SHORT'
+         )
+         AND ABS(se.LEVEL_PRICE - (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0)
+             / NULLIF((se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0, 0) * 100.0
+             > 5.0
+         AND (
+             se.VOLATILITY_CONTEXT IS NULL
+             OR se.VOLATILITY_CONTEXT <= 0
+             OR ABS(se.LEVEL_PRICE - (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0)
+                / se.VOLATILITY_CONTEXT
+                > 3.0
+         )
+        THEN ' Note: cited '
+             || COALESCE(LOWER(se.LEVEL_TYPE), 'level')
+             || ' at $' || ROUND(se.LEVEL_PRICE, 2)
+             || ' is '
+             || ROUND(
+                    ABS(se.LEVEL_PRICE - (se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0)
+                    / NULLIF((se.ENTRY_ZONE_LOW + se.ENTRY_ZONE_HIGH) / 2.0, 0) * 100.0,
+                    1
+                )
+             || '% from entry midpoint — structural anchor may be stale.'
+        ELSE ''
     END                                              AS SETUP_NARRATIVE
 
 FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se

@@ -559,6 +559,73 @@ BEGIN
        AND p.SETUP_EVENT_ID IS NULL
        AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL;
 
+    -- Structural anchor mismatch (mirrors orchestrator.py):
+    -- Primary evidence LEVEL_PRICE is far from proposal entry midpoint,
+    -- both in absolute percent and ATR multiples. Prevents "TREND_PULLBACK
+    -- to support at $244" from publishing when the entry is at $327.
+    UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+       SET EXECUTION_POLICY_STATUS = 'STRUCTURAL_ANCHOR_MISMATCH',
+           EXECUTION_POLICY_REASON = 'PRIMARY_EVIDENCE_LEVEL_FAR_FROM_ENTRY',
+           IS_RESEARCH_ONLY = TRUE
+      FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
+     WHERE p.BOARD_RUN_ID = :v_run_id
+       AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+       AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
+       AND se.SETUP_EVENT_ID = p.PRIMARY_EVIDENCE_SETUP_EVENT_ID
+       AND se.SETUP_FAMILY IN (
+           'BREAKOUT_RETEST_LONG','SUPPORT_WICK_LONG','TREND_PULLBACK_LONG',
+           'THREE_BAR_REVERSAL_LONG','BREAKDOWN_RETEST_SHORT',
+           'RESISTANCE_WICK_SHORT','THREE_BAR_REVERSAL_SHORT',
+           'FAILED_BREAKOUT_SHORT'
+       )
+       AND p.ENTRY_ZONE_LOW IS NOT NULL
+       AND p.ENTRY_ZONE_HIGH IS NOT NULL
+       AND se.LEVEL_PRICE IS NOT NULL
+       AND (
+           ABS(se.LEVEL_PRICE - (p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2)
+           / NULLIF((p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2, 0) * 100
+           > 5.0
+       )
+       AND (
+           se.VOLATILITY_CONTEXT IS NULL
+           OR se.VOLATILITY_CONTEXT <= 0
+           OR ABS(se.LEVEL_PRICE - (p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2)
+              / se.VOLATILITY_CONTEXT
+              > 3.0
+       );
+
+    -- Unresolved opposing setup: eligible opposite-direction setup within 3
+    -- bars with structure confidence >= 0.65, not linked as primary evidence,
+    -- and chair's WHY_NOT_OPPOSITE does not name its setup_event_id or family.
+    -- RESEARCH trust on the opposing setup does NOT exempt it from this gate.
+    UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+       SET EXECUTION_POLICY_STATUS = 'UNRESOLVED_OPPOSING_SETUP',
+           EXECUTION_POLICY_REASON = 'ELIGIBLE_OPPOSING_SETUP_NOT_ADDRESSED',
+           IS_RESEARCH_ONLY = TRUE
+      FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT tv
+     WHERE p.BOARD_RUN_ID = :v_run_id
+       AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+       AND tv.RUN_ID = p.BOARD_RUN_ID
+       AND tv.DOSSIER_ID = p.BOARD_DOSSIER_ID
+       AND EXISTS (
+           SELECT 1
+             FROM MIP.APP.STRUCTURAL_SETUP_EVENTS opp
+            WHERE opp.SYMBOL = p.SYMBOL
+              AND opp.DIRECTION <> p.DIRECTION
+              AND opp.SETUP_STATUS IN ('DETECTED','ELIGIBLE','WAITING')
+              AND COALESCE(opp.STRUCTURE_CONFIDENCE, 0) >= 0.65
+              AND opp.SETUP_DATE >= DATEADD('day', -3, CURRENT_DATE())
+              AND opp.SETUP_EVENT_ID <> COALESCE(p.PRIMARY_EVIDENCE_SETUP_EVENT_ID, -1)
+              AND (
+                  tv.WHY_NOT_OPPOSITE IS NULL
+                  OR LENGTH(TRIM(tv.WHY_NOT_OPPOSITE)) < 40
+                  OR (
+                      POSITION(TO_VARCHAR(opp.SETUP_EVENT_ID) IN COALESCE(tv.WHY_NOT_OPPOSITE, '')) = 0
+                      AND POSITION(opp.SETUP_FAMILY IN COALESCE(tv.WHY_NOT_OPPOSITE, '')) = 0
+                  )
+              )
+       );
+
     -- Defensive non-STOCK guard: any structural proposal whose board dossier is
     -- non-STOCK can never be EXECUTABLE or live-tradeable. Non-STOCK should never
     -- reach here (excluded pre-agent + publish guard), but this forces the

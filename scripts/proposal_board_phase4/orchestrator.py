@@ -106,6 +106,31 @@ _DEFAULT_STATEMENT_TIMEOUT_SEC = 240
 _DEFAULT_MAX_ENTRY_ZONE_DISTANCE_PCT = 3.0
 _COMPLETE_MAX_RETRIES = 2
 
+# Structural coherence gate: primary evidence LEVEL_PRICE vs proposal entry
+# midpoint. Both thresholds must be exceeded to trigger the block (percent AND
+# ATR-multiple), so pathological cheap tickers with 5% ATRs are not spuriously
+# flagged and mega-caps with tight ATRs are not missed.
+_DEFAULT_LEVEL_ANCHOR_MAX_GAP_PCT = 5.0
+_DEFAULT_LEVEL_ANCHOR_MAX_GAP_ATR = 3.0
+# Invalidation distance from entry mid for pullback/reversal families.
+_DEFAULT_INVALIDATION_MAX_GAP_PCT = 15.0
+# Opposing setup gate.
+_DEFAULT_OPPOSING_CONFIDENCE_THRESHOLD = 0.65
+_DEFAULT_OPPOSING_BARS_WINDOW = 3
+
+# Level-anchored families (LEVEL_PRICE claims to justify entry near a
+# specific support/resistance). Kept in sync with 504_sp_detect_structural_setups.sql.
+_LEVEL_ANCHORED_FAMILIES = {
+    "BREAKOUT_RETEST_LONG",
+    "SUPPORT_WICK_LONG",
+    "TREND_PULLBACK_LONG",
+    "THREE_BAR_REVERSAL_LONG",
+    "BREAKDOWN_RETEST_SHORT",
+    "RESISTANCE_WICK_SHORT",
+    "THREE_BAR_REVERSAL_SHORT",
+    "FAILED_BREAKOUT_SHORT",
+}
+
 # Legacy CLI budget alias (LLM calls, not agent sessions).
 _DEFAULT_DAILY_CALL_BUDGET: int = _DEFAULT_MAX_LLM_CALLS_PER_RUN
 
@@ -2165,6 +2190,53 @@ def _reap_zombie_board_runs(cur, max_age_minutes: int = 90) -> int:
     return cur.rowcount
 
 
+def _finalize_stale_chair_done_runs(cur, max_age_minutes: int = 10) -> int:
+    """Auto-finalize CHAIR_DONE runs whose publish already succeeded but whose
+    final RUN_STATUS='COMPLETE' UPDATE never fired (e.g. the subprocess was
+    killed between publish and finalize).
+
+    Symptom recovery: on 2026-07-22 the orchestrator stalled twice at
+    CHAIR_DONE with FINISHED_AT=NULL after publish had inserted proposals.
+    V_LATEST_AUTHORITATIVE_BOARD_RUN then filtered the run out, so the
+    published proposals were invisible to LPA import even though they
+    were in the DB. This self-heal marks any such CHAIR_DONE row COMPLETE
+    (with a reason_code) using the row count from STRUCTURAL_TRADE_PROPOSALS
+    as authoritative for FINAL_PROPOSAL_COUNT.
+
+    Never touches:
+      * runs still legitimately in progress (CHAIR_DONE for < max_age_minutes)
+      * runs that never inserted anything (those go to FAILED via reaper or
+        stay CHAIR_DONE for manual review)
+    """
+    cur.execute(
+        """
+        UPDATE MIP.APP.PROPOSAL_BOARD_RUN r
+           SET RUN_STATUS = 'COMPLETE',
+               FINISHED_AT = CURRENT_TIMESTAMP(),
+               FINAL_PROPOSAL_COUNT = pub.PUB_COUNT,
+               ERROR_JSON = OBJECT_CONSTRUCT(
+                   'reason_code', 'AUTO_FINALIZED_STALE_CHAIR_DONE',
+                   'message', 'Run stalled at CHAIR_DONE after publish; auto-finalized on next board start.',
+                   'max_age_minutes', %(max_age)s,
+                   'final_proposal_count_source', 'STRUCTURAL_TRADE_PROPOSALS row count'
+               )
+          FROM (
+              SELECT BOARD_RUN_ID AS RUN_ID, COUNT(*) AS PUB_COUNT
+              FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+              WHERE STATUS IN ('PROPOSED', 'EXPIRED')
+              GROUP BY BOARD_RUN_ID
+          ) pub
+         WHERE pub.RUN_ID = r.RUN_ID
+           AND r.RUN_STATUS = 'CHAIR_DONE'
+           AND (r.FINISHED_AT IS NULL)
+           AND r.STARTED_AT < DATEADD('minute', -%(max_age)s, CURRENT_TIMESTAMP())
+           AND pub.PUB_COUNT > 0
+        """,
+        {"max_age": max_age_minutes},
+    )
+    return int(cur.rowcount or 0)
+
+
 def _normalize_published_broker_stops(cur, run_id: str) -> int:
     """Map structural invalidation (often inside entry zone) to broker stop outside zone.
 
@@ -2303,6 +2375,19 @@ def _supersede_stale_proposals(
 
     Prevents C1g duplicate_collision from silently dropping fresh chair PROPOSE_*
     verdicts when the operator re-runs the board the same day.
+
+    Two-step cascade:
+      (1) Mark stale proposals as EXPIRED / SUPERSEDED_BY_NEWER_BOARD_RUN.
+      (2) Cascade to LIVE_ACTIONS spawned from those proposals: any pre-broker
+          pending row is flipped to STATUS='SUPERSEDED' with REASON_CODES tag
+          PROPOSAL_EXPIRED_AT_PARENT (same taxonomy as
+          SP_EXPIRE_STALE_DAILY_PROPOSALS Rule 0). EXECUTION_REQUESTED and
+          later statuses are NEVER touched (broker race risk) and are left
+          for manual reconciliation.
+
+    Without step (2) the publish INSERT's NOT EXISTS(LIVE_ACTIONS) guard
+    would silently block same-symbol fresh proposals because yesterday's
+    auto-imported LPA queue rows would still look "open".
     """
     cur.execute(
         """
@@ -2331,6 +2416,135 @@ def _supersede_stale_proposals(
            )
         """,
         {"run_id": run_id, "portfolio_id": portfolio_id},
+    )
+    superseded_proposals = int(cur.rowcount or 0)
+
+    cur.execute(
+        """
+        UPDATE MIP.LIVE.LIVE_ACTIONS la
+           SET STATUS       = 'SUPERSEDED',
+               REASON_CODES = ARRAY_APPEND(
+                                  COALESCE(la.REASON_CODES, ARRAY_CONSTRUCT()),
+                                  'PROPOSAL_EXPIRED_AT_PARENT'
+                              ),
+               UPDATED_AT   = CURRENT_TIMESTAMP()
+          FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+         WHERE p.PROPOSAL_ID = la.PROPOSAL_ID
+           AND p.STATUS = 'EXPIRED'
+           AND la.LIVE_INTENT_KIND = 'STRUCTURAL'
+           AND la.STATUS IN (
+               'PROPOSED',
+               'PENDING_OPEN_VALIDATION',
+               'OPEN_ELIGIBLE',
+               'OPEN_CAUTION',
+               'OPEN_BLOCKED',
+               'PENDING_OPEN_STABILITY_REVIEW',
+               'READY_FOR_APPROVAL_FLOW',
+               'PM_ACCEPTED',
+               'COMPLIANCE_APPROVED',
+               'INTENT_SUBMITTED',
+               'INTENT_APPROVED',
+               'REVALIDATED_PASS',
+               'REVALIDATED_FAIL'
+           )
+           AND (%(portfolio_id)s IS NULL
+                OR la.PORTFOLIO_ID = %(portfolio_id)s
+                OR la.PORTFOLIO_ID IS NULL)
+        """,
+        {"portfolio_id": portfolio_id},
+    )
+    cascaded_actions = int(cur.rowcount or 0)
+    if cascaded_actions:
+        logger.info(
+            "phase4 supersede_stale_proposals cascade run=%s "
+            "live_actions_superseded=%d (PROPOSAL_EXPIRED_AT_PARENT)",
+            run_id, cascaded_actions,
+        )
+
+    return superseded_proposals
+
+
+def _reconcile_stale_execution_requests(
+    cur,
+    portfolio_id: Optional[int],
+    broker_freshness_hours: int = 48,
+) -> int:
+    """Reconcile stale EXECUTION_REQUESTED / EXECUTION_PARTIAL LIVE_ACTIONS
+    against IBKR broker truth.
+
+    Operational rule (single source of truth = IBKR):
+      If a LIVE_ACTION is EXECUTION_REQUESTED or EXECUTION_PARTIAL, its
+      parent proposal is not from the latest authoritative board run, AND
+      the broker shows no open position for that symbol/portfolio, then the
+      submission was obviously never carried out (order rejected, cancelled
+      at broker, or never confirmed). The row is a zombie that would falsely
+      block fresh same-symbol proposals from publishing, and must be marked
+      SUPERSEDED with reason STALE_NO_BROKER_POSITION.
+
+    Safety guards:
+      * Only touches actions on portfolios with FRESH broker snapshots
+        (default: within last 48h). If we can't confirm broker truth is
+        fresh, we do not act.
+      * Never touches actions whose parent proposal is from the current
+        authoritative board run (protects same-day fresh submissions that
+        may not yet appear in a broker snapshot).
+      * Never touches EXECUTED / CLOSED / SUPERSEDED / REJECTED /
+        CANCELLED / EXPIRED — those are terminal or already handled.
+      * Only touches STRUCTURAL intents; other LIVE_INTENT_KIND rows are
+        managed by their own pipelines.
+
+    Returns the number of actions superseded.
+    """
+    cur.execute(
+        """
+        UPDATE MIP.LIVE.LIVE_ACTIONS la
+           SET STATUS       = 'SUPERSEDED',
+               REASON_CODES = ARRAY_APPEND(
+                                  COALESCE(la.REASON_CODES, ARRAY_CONSTRUCT()),
+                                  'STALE_NO_BROKER_POSITION'
+                              ),
+               UPDATED_AT   = CURRENT_TIMESTAMP()
+         WHERE la.ACTION_ID IN (
+            WITH latest_broker AS (
+                SELECT SYMBOL, PORTFOLIO_ID,
+                       MAX_BY(POSITION_QTY, SNAPSHOT_TS) AS LATEST_QTY
+                FROM MIP.LIVE.BROKER_SNAPSHOTS
+                WHERE SNAPSHOT_TS >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                  AND SYMBOL IS NOT NULL
+                GROUP BY SYMBOL, PORTFOLIO_ID
+            ),
+            broker_freshness AS (
+                SELECT PORTFOLIO_ID, MAX(SNAPSHOT_TS) AS ACCT_LATEST_TS
+                FROM MIP.LIVE.BROKER_SNAPSHOTS
+                WHERE SNAPSHOT_TS >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                GROUP BY PORTFOLIO_ID
+            ),
+            latest_auth AS (
+                SELECT RUN_ID FROM MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN
+            )
+            SELECT la2.ACTION_ID
+              FROM MIP.LIVE.LIVE_ACTIONS la2
+              LEFT JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+                     ON p.PROPOSAL_ID = la2.PROPOSAL_ID
+              LEFT JOIN latest_auth auth ON auth.RUN_ID = p.BOARD_RUN_ID
+              LEFT JOIN latest_broker lb
+                     ON lb.SYMBOL = la2.SYMBOL
+                    AND lb.PORTFOLIO_ID = la2.PORTFOLIO_ID
+              LEFT JOIN broker_freshness bf
+                     ON bf.PORTFOLIO_ID = la2.PORTFOLIO_ID
+             WHERE la2.LIVE_INTENT_KIND = 'STRUCTURAL'
+               AND la2.STATUS IN ('EXECUTION_REQUESTED', 'EXECUTION_PARTIAL')
+               AND auth.RUN_ID IS NULL
+               AND COALESCE(lb.LATEST_QTY, 0) = 0
+               AND bf.ACCT_LATEST_TS >= DATEADD('hour', -%(freshness_hours)s, CURRENT_TIMESTAMP())
+               AND (%(portfolio_id)s IS NULL
+                    OR la2.PORTFOLIO_ID = %(portfolio_id)s)
+         )
+        """,
+        {
+            "portfolio_id": portfolio_id,
+            "freshness_hours": int(broker_freshness_hours),
+        },
     )
     return int(cur.rowcount or 0)
 
@@ -2366,6 +2580,14 @@ def _publish_to_structural(
 
     `ibkr_account_mode` is recorded in audit JSON for transparency.
     """
+    broker_zombies_cleared = _reconcile_stale_execution_requests(cur, portfolio_id)
+    if broker_zombies_cleared:
+        logger.info(
+            "phase4 reconcile_stale_execution_requests run=%s portfolio_id=%s "
+            "zombies_cleared=%d (STALE_NO_BROKER_POSITION)",
+            run_id, portfolio_id, broker_zombies_cleared,
+        )
+
     superseded = _supersede_stale_proposals(cur, run_id, portfolio_id)
     if superseded:
         logger.info(
@@ -2680,6 +2902,96 @@ def _publish_to_structural(
            AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
         """,
         {"run_id": run_id},
+    )
+
+    # Structural anchor mismatch: the primary evidence setup cites a support
+    # (LONG) or resistance (SHORT) level that is far from the proposal's actual
+    # entry midpoint. This is the AAPL-style incoherence — dossier says
+    # "pullback to support $244" while proposal entry is anchored at $327.
+    # Blocks BOTH percent AND ATR-multiple thresholds so cheap tickers with wide
+    # ATRs aren't spuriously flagged.
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET EXECUTION_POLICY_STATUS = 'STRUCTURAL_ANCHOR_MISMATCH',
+               EXECUTION_POLICY_REASON = 'PRIMARY_EVIDENCE_LEVEL_FAR_FROM_ENTRY',
+               IS_RESEARCH_ONLY = TRUE
+          FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+           AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+           AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
+           AND se.SETUP_EVENT_ID = p.PRIMARY_EVIDENCE_SETUP_EVENT_ID
+           AND se.SETUP_FAMILY IN (
+               'BREAKOUT_RETEST_LONG','SUPPORT_WICK_LONG','TREND_PULLBACK_LONG',
+               'THREE_BAR_REVERSAL_LONG','BREAKDOWN_RETEST_SHORT',
+               'RESISTANCE_WICK_SHORT','THREE_BAR_REVERSAL_SHORT',
+               'FAILED_BREAKOUT_SHORT'
+           )
+           AND p.ENTRY_ZONE_LOW IS NOT NULL
+           AND p.ENTRY_ZONE_HIGH IS NOT NULL
+           AND se.LEVEL_PRICE IS NOT NULL
+           AND (
+               ABS(se.LEVEL_PRICE - (p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2)
+               / NULLIF((p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2, 0) * 100
+               > %(max_gap_pct)s
+           )
+           AND (
+               se.VOLATILITY_CONTEXT IS NULL
+               OR se.VOLATILITY_CONTEXT <= 0
+               OR ABS(se.LEVEL_PRICE - (p.ENTRY_ZONE_LOW + p.ENTRY_ZONE_HIGH) / 2)
+                  / se.VOLATILITY_CONTEXT
+                  > %(max_gap_atr)s
+           )
+        """,
+        {
+            "run_id": run_id,
+            "max_gap_pct": _DEFAULT_LEVEL_ANCHOR_MAX_GAP_PCT,
+            "max_gap_atr": _DEFAULT_LEVEL_ANCHOR_MAX_GAP_ATR,
+        },
+    )
+
+    # Unresolved opposing setup: an eligible opposite-direction setup existed
+    # within a few bars with meaningful structure confidence, and the chair
+    # (a) did not link it as the primary evidence and (b) did not author a
+    # substantive why_not_opposite naming its setup_event_id. Blocks the LONG
+    # (or SHORT) from executing unopposed while genuinely contradictory
+    # bearish (or bullish) evidence sits eligible. RESEARCH trust does NOT
+    # exempt the opposing setup from this evidence-level gate.
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET EXECUTION_POLICY_STATUS = 'UNRESOLVED_OPPOSING_SETUP',
+               EXECUTION_POLICY_REASON = 'ELIGIBLE_OPPOSING_SETUP_NOT_ADDRESSED',
+               IS_RESEARCH_ONLY = TRUE
+          FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT tv
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+           AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+           AND tv.RUN_ID = p.BOARD_RUN_ID
+           AND tv.DOSSIER_ID = p.BOARD_DOSSIER_ID
+           AND EXISTS (
+               SELECT 1
+                 FROM MIP.APP.STRUCTURAL_SETUP_EVENTS opp
+                WHERE opp.SYMBOL = p.SYMBOL
+                  AND opp.DIRECTION <> p.DIRECTION
+                  AND opp.SETUP_STATUS IN ('DETECTED','ELIGIBLE','WAITING')
+                  AND COALESCE(opp.STRUCTURE_CONFIDENCE, 0) >= %(conf)s
+                  AND opp.SETUP_DATE >= DATEADD('day', -%(bars)s, CURRENT_DATE())
+                  AND opp.SETUP_EVENT_ID <> COALESCE(p.PRIMARY_EVIDENCE_SETUP_EVENT_ID, -1)
+                  AND (
+                      tv.WHY_NOT_OPPOSITE IS NULL
+                      OR LENGTH(TRIM(tv.WHY_NOT_OPPOSITE)) < 40
+                      OR (
+                          POSITION(TO_VARCHAR(opp.SETUP_EVENT_ID) IN COALESCE(tv.WHY_NOT_OPPOSITE, '')) = 0
+                          AND POSITION(opp.SETUP_FAMILY IN COALESCE(tv.WHY_NOT_OPPOSITE, '')) = 0
+                      )
+                  )
+           )
+        """,
+        {
+            "run_id": run_id,
+            "conf": _DEFAULT_OPPOSING_CONFIDENCE_THRESHOLD,
+            "bars": _DEFAULT_OPPOSING_BARS_WINDOW,
+        },
     )
 
     # Defensive non-STOCK guard: any structural proposal whose board dossier is
@@ -3009,6 +3321,13 @@ async def orchestrate_phase4_board(
                 logger.warning(
                     "phase4 reaped %d zombie RUNNING board rows before start run=%s",
                     reaped, run_id,
+                )
+            auto_finalized = _finalize_stale_chair_done_runs(cur)
+            if auto_finalized:
+                logger.warning(
+                    "phase4 auto-finalized %d stale CHAIR_DONE runs "
+                    "(had published proposals but never marked COMPLETE) before start run=%s",
+                    auto_finalized, run_id,
                 )
             cur.execute(
                 """
@@ -3493,8 +3812,23 @@ async def orchestrate_phase4_board(
                     ibkr_account_mode,
                 )
                 raise pub_exc
-        _warn_limbo_propose_slate(cur, run_id)
 
+        # ------------------------------------------------------------------
+        # FINALIZE FIRST, LOG SECOND.
+        #
+        # Historical bug (observed twice on 2026-07-22): the orchestrator
+        # subprocess would die between _publish_to_structural (which
+        # auto-committed the STRUCTURAL_TRADE_PROPOSALS inserts) and the
+        # final RUN_STATUS='COMPLETE' UPDATE, leaving the run stuck at
+        # CHAIR_DONE with FINISHED_AT=NULL. V_LATEST_AUTHORITATIVE_BOARD_RUN
+        # then filtered out the run, and its published proposals were
+        # invisible to LPA import even though they existed in the DB.
+        #
+        # To make this failure mode impossible, we finalize the RUN row
+        # IMMEDIATELY after publish (before _warn_limbo_propose_slate and
+        # summary-stats collection). Any downstream failure now leaves
+        # the run properly COMPLETE / PARTIAL_FAILURE / FAILED.
+        # ------------------------------------------------------------------
         final_status = "COMPLETE"
         if invalid_results:
             final_status = "PARTIAL_FAILURE" if valid_results else "FAILED"
@@ -3530,6 +3864,18 @@ async def orchestrate_phase4_board(
             },
         )
         conn.commit()
+
+        # Non-critical: log any leftover PROPOSE_* slate rows still in
+        # PUBLICATION_STATUS='PENDING'. Wrapped in try/except so a bad
+        # SELECT here does NOT undo the finalize we just committed.
+        try:
+            _warn_limbo_propose_slate(cur, run_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "phase4 warn_limbo_propose_slate failed run=%s (non-fatal, "
+                "RUN_STATUS already finalized to %s)",
+                run_id, final_status,
+            )
 
         # Collect summary stats for the run-end summary block.
         chair_propose_count = sum(

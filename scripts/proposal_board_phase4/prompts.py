@@ -325,8 +325,19 @@ HARD RULES (summary):
   DOMINANT LONG: MARKET_STRUCTURE favors LONG (TREND_UP, SUPPORT_BOUNCE, BREAKOUT_ATTEMPT, etc.) AND
   LEVEL_PRICE_ACTION is LONG_LOCATION or BOTH_SIDES (not SHORT_LOCATION/NO_EDGE) AND
   THESIS is WATCH_LONG or LONG_THESIS (not NO_TRADE/CONFLICTED) AND RISK is not HARD_BLOCK/NO_TRADE AND
-  EVIDENCE_JSON.primary_evidence_setup_event_id is present AND you can anchor entry zone within 3%% of current_price.
+  EVIDENCE_JSON.primary_evidence_setup_event_id is present AND you can anchor entry zone within 3%% of current_price AND
+  the primary evidence setup has level_entry_coherent=true (i.e. the cited LEVEL_PRICE is near the entry midpoint).
   DOMINANT SHORT: mirror for SHORT when policy.short_live_enabled allows live shorts.
+- STRUCTURAL COHERENCE GATE: Do NOT PROPOSE if the primary evidence setup's level_entry_coherent field is false. That
+  means the cited structural level (support for LONG, resistance for SHORT) sits far from the entry zone — the
+  setup's narrative and geometry disagree, and the dossier's board_warnings will include NO_COHERENT_PRIMARY_EVIDENCE.
+  In that case emit WATCH_LONG / WATCH_SHORT / WAIT_FOR_CONFIRMATION with a rationale citing the anchor mismatch.
+- OPPOSING SETUP RULE: If EVIDENCE_JSON.setup_events_evidence_only contains an ELIGIBLE or DETECTED setup with
+  DIRECTION opposite to your intended proposal within the last 3 bars AND structure_confidence >= 0.65, your
+  why_not_opposite MUST reference that opposing setup by setup_event_id and setup_family and give a specific,
+  evidence-based reason for overriding it. Do NOT dismiss opposing evidence by citing trust_label (e.g.
+  "opposing family is RESEARCH-only") — trust gates execution, not evidence weight. Failure to substantively
+  address the opposing setup will cause the proposal to publish as UNRESOLVED_OPPOSING_SETUP (research-only).
 - thesis_label in proposed_trade_config MUST start with AGENTIC_ for PROPOSE/WATCH actions.
 - For PROPOSE_*, WATCH_*_FAILURE, WAIT_FOR_CONFIRMATION: emit market_structure_read,
   body_wick_break_read, structure_decision_reason citing market_structure_map.

@@ -73,6 +73,9 @@ from app.routers.live_bracket_calibration import (
     classify_blocked_bracket_for_diagnostics,
 )
 from app.services.broker_execution_reconcile import (
+    build_missing_close_execution_placeholders,
+    detect_missing_close_fill_gaps,
+    fetch_deduped_executions,
     insert_reconcile_audit,
     run_reconcile_dry_run,
     verify_apply_item,
@@ -1520,7 +1523,6 @@ def _auto_import_latest_proposals_for_live_portfolio(
                 "latest_batch_date": None,
                 "error": {"message": str(exc)},
             }
-    safe_limit = max(1, min(int(limit or 200), 1000))
     try:
         result = import_live_actions_from_proposals(
             ImportLiveActionsFromProposalsRequest(
@@ -6896,11 +6898,28 @@ def refresh_live_snapshot(
     except Exception as exc:
         backfill = {"scanned": 0, "mapped": 0, "updated": 0, "error": str(exc)}
 
+    structural_import: dict = {"attempted": False, "ok": None}
+    if portfolio_id is not None:
+        try:
+            structural_import = _auto_import_latest_proposals_for_live_portfolio(
+                int(portfolio_id),
+                limit=50,
+            )
+            structural_import["enabled"] = True
+        except Exception as exc:  # noqa: BLE001
+            structural_import = {
+                "attempted": True,
+                "ok": False,
+                "enabled": True,
+                "error": {"message": str(exc)},
+            }
+
     return {
         "ok": True,
         "mode": "on_demand",
         "result": result,
         "perm_id_backfill": backfill,
+        "structural_import": structural_import,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -9266,22 +9285,9 @@ def get_live_activity_overview(
         pending_decisions = list(pending_by_symbol.values())
 
         execution_rows_ib = []
+        exec_lookback_days = max(int(order_lookback_days), int(snapshot_lookback_days), 14)
         try:
-            cur.execute(
-                """
-                select
-                  SNAPSHOT_TS, SYMBOL, SECURITY_TYPE, OPEN_ORDER_ID, OPEN_ORDER_FILLED,
-                  OPEN_ORDER_LIMIT_PRICE, AVG_COST, REALIZED_PNL, PAYLOAD
-                from MIP.LIVE.BROKER_SNAPSHOTS
-                where SNAPSHOT_TYPE = 'EXECUTION'
-                  and IBKR_ACCOUNT_ID = %s
-                  and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
-                order by SNAPSHOT_TS desc
-                limit %s
-                """,
-                (account_id, order_lookback_days, max(int(execution_limit) * 20, 200)),
-            )
-            execution_rows_ib = fetch_all(cur)
+            execution_rows_ib = fetch_deduped_executions(cur, str(account_id or ""), exec_lookback_days)
         except Exception:
             execution_rows_ib = []
 
@@ -9553,15 +9559,17 @@ def get_live_activity_overview(
             f"{str(e.get('broker_order_id') or '')}:{str(e.get('symbol') or '').upper()}:{str(e.get('execution_ts') or '')}:{str(e.get('qty_filled') or '')}"
             for e in executions
         }
-        # Also dedupe on (broker_order_id, symbol) so MIP_BROKER_LEDGER rows do
-        # not surface alongside IBKR rows that already carry execution_context
-        # and P&L logic. Without this, a stale FILLED_AT (e.g. from a reconcile
-        # backfill stamping current_timestamp) creates a phantom ledger row
-        # with the wrong date and no P&L — the 2026-05-28 incident pattern.
-        seen_broker_keys = {
+        # Also dedupe on (broker_order_id, symbol, side, qty, execution_ts) so MIP_BROKER_LEDGER
+        # rows do not surface alongside IBKR rows for the same fill. The old (broker_order_id,
+        # symbol) key alone suppressed legitimate multi-leg rows (e.g. partial fills, separate
+        # open vs close orders sharing lineage confusion).
+        seen_broker_fill_keys = {
             (
                 str(e.get("broker_order_id") or "").strip(),
                 str(e.get("symbol") or "").upper(),
+                str(e.get("side") or "").upper(),
+                str(e.get("qty_filled") or ""),
+                str(e.get("execution_ts") or ""),
             )
             for e in executions
             if e.get("broker_order_id")
@@ -9575,9 +9583,27 @@ def get_live_activity_overview(
                 continue
             local_broker_id = str(local_exec.get("broker_order_id") or "").strip()
             local_symbol = str(local_exec.get("symbol") or "").upper()
-            if local_broker_id and (local_broker_id, local_symbol) in seen_broker_keys:
+            local_side = str(local_exec.get("side") or "").upper()
+            local_broker_fill_key = (
+                local_broker_id,
+                local_symbol,
+                local_side,
+                str(local_exec.get("qty_filled") or ""),
+                str(local_exec.get("execution_ts") or ""),
+            )
+            if local_broker_id and local_broker_fill_key in seen_broker_fill_keys:
                 continue
             executions.append(local_exec)
+
+        missing_close_gaps = detect_missing_close_fill_gaps(
+            cur,
+            str(account_id or ""),
+            exec_lookback_days,
+            held_symbols,
+            executions,
+        )
+        for gap_row in build_missing_close_execution_placeholders(missing_close_gaps):
+            executions.append(gap_row)
 
         def _execution_sort_ts(e: dict) -> datetime:
             v = e.get("execution_ts")
@@ -9720,6 +9746,8 @@ def get_live_activity_overview(
                 "unmapped_total_before_flat_filter": int(
                     unmapped_exec_summary.get("unmapped_total_before_flat_filter") or 0
                 ),
+                "missing_close_fill_count": len(missing_close_gaps),
+                "missing_close_fill_symbols": [g.get("symbol") for g in missing_close_gaps if g.get("symbol")],
                 "market_open": market_open,
                 "market_window_open_utc": open_utc,
                 "market_window_close_utc": close_utc,
@@ -18255,6 +18283,15 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        from app.services.board_run_heal import heal_stale_chair_done_board_runs
+
+        healed_runs = heal_stale_chair_done_board_runs(conn, max_age_minutes=3)
+        if healed_runs:
+            conn.commit()
+            logging.getLogger("live").warning(
+                "structural import: auto-finalized %d stale CHAIR_DONE board run(s)",
+                healed_runs,
+            )
 
         # 1. Validate live portfolio config
         cur.execute(

@@ -228,6 +228,110 @@ def _aggregate_lpa_import_skip_summary(per_portfolio_results: dict[str, Any]) ->
     return totals
 
 
+def _heal_stale_chair_done_board_runs(conn, *, max_age_minutes: int = 3) -> int:
+    """Finalize CHAIR_DONE runs that published proposals but never marked COMPLETE."""
+    from app.services.board_run_heal import heal_stale_chair_done_board_runs
+
+    return heal_stale_chair_done_board_runs(conn, max_age_minutes=max_age_minutes)
+
+
+def _count_importable_executable_proposals(conn) -> int:
+    """Count PROPOSED EXECUTABLE rows on the latest authoritative board run."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS CNT
+              FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS stp
+              JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+                ON auth.RUN_ID = stp.BOARD_RUN_ID
+             WHERE stp.STATUS = 'PROPOSED'
+               AND COALESCE(stp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
+            """
+        )
+        row = cur.fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        try:
+            cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _import_proposals_to_active_lpa_portfolios(
+    *,
+    fallback_portfolio_id: int,
+    import_limit: int,
+) -> dict[str, Any]:
+    """Heal stale board runs, then import EXECUTABLE proposals into every active LPA portfolio."""
+    from .live import ImportStructuralProposalsRequest, import_structural_proposals
+
+    heal_conn = get_connection()
+    healed_runs = 0
+    try:
+        healed_runs = _heal_stale_chair_done_board_runs(heal_conn, max_age_minutes=3)
+        heal_conn.commit()
+        if healed_runs:
+            log.warning(
+                "LPA import: auto-finalized %d stale CHAIR_DONE board run(s) before import",
+                healed_runs,
+            )
+    finally:
+        try:
+            heal_conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT PORTFOLIO_ID
+            FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            WHERE COALESCE(IS_ACTIVE, TRUE) = TRUE
+            ORDER BY PORTFOLIO_ID
+            """
+        )
+        active_portfolios = [int(r[0]) for r in (cur.fetchall() or [])]
+    finally:
+        conn.close()
+
+    if not active_portfolios:
+        active_portfolios = [int(fallback_portfolio_id)]
+
+    per_portfolio_results: dict[str, Any] = {}
+    total_imported = 0
+    for pid in active_portfolios:
+        try:
+            import_result = import_structural_proposals(
+                ImportStructuralProposalsRequest(
+                    live_portfolio_id=pid,
+                    limit=max(1, min(int(import_limit), 50)),
+                    max_proposal_age_days=7,
+                    dedupe_by_symbol=True,
+                    skip_stale=True,
+                )
+            )
+            res = import_result if isinstance(import_result, dict) else {"result": import_result}
+            per_portfolio_results[str(pid)] = res
+            total_imported += int(res.get("imported_count") or 0)
+        except HTTPException as hex_exc:
+            log.warning("LPA import portfolio %s failed (http): %s", pid, hex_exc.detail)
+            per_portfolio_results[str(pid)] = {"error": jsonable_encoder(hex_exc.detail)}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("LPA import portfolio %s failed", pid)
+            per_portfolio_results[str(pid)] = {"error": str(exc)}
+
+    return {
+        "healed_chair_done_runs": healed_runs,
+        "active_portfolios": active_portfolios,
+        "per_portfolio_results": per_portfolio_results,
+        "total_imported": total_imported,
+        "skip_summary": _aggregate_lpa_import_skip_summary(per_portfolio_results),
+    }
+
+
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -624,89 +728,21 @@ def run_ib_manual_daily_job(
         response["lpa_import_triggered"] = False
         if import_proposals_to_lpa:
             try:
-                from .live import (  # lazy import avoids router import cycle
-                    ImportStructuralProposalsRequest,
-                    import_structural_proposals,
+                lpa_out = _import_proposals_to_active_lpa_portfolios(
+                    fallback_portfolio_id=int(proposal_board_portfolio),
+                    import_limit=max(1, min(int(proposal_board_max_proposals), 50)),
                 )
-
-                # Proposals are PORTFOLIO-AGNOSTIC: the agentic board publishes a
-                # single shared set of STRUCTURAL_TRADE_PROPOSALS (PORTFOLIO_ID is
-                # NULL). The same proposal is used across real-money and paper.
-                # The daily run must therefore make EVERY active live portfolio's
-                # LPA see the same proposals INDEPENDENTLY — it must never write
-                # LPA for only the one account that happened to be connected when
-                # the job ran. We import into each active LIVE_PORTFOLIO_CONFIG
-                # portfolio; each gets its own (PORTFOLIO_ID, PROPOSAL_ID)
-                # LIVE_ACTIONS row in a PENDING (non-executed) state. Importing
-                # into a REAL portfolio's LPA never auto-trades — real-money
-                # execution still requires the separate arming/confirmation gates.
-                conn = get_connection()
-                try:
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        SELECT PORTFOLIO_ID
-                        FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-                        WHERE COALESCE(IS_ACTIVE, TRUE) = TRUE
-                        ORDER BY PORTFOLIO_ID
-                        """
-                    )
-                    active_portfolios = [int(r[0]) for r in (cur.fetchall() or [])]
-                finally:
-                    try:
-                        conn.close()
-                    except Exception:  # noqa: BLE001
-                        pass
-
-                if not active_portfolios:
-                    # Fall back to the board's context portfolio so the daily run
-                    # never silently imports nothing when config is unexpected.
-                    active_portfolios = [int(proposal_board_portfolio)]
-
-                per_portfolio_results: dict[str, Any] = {}
-                total_imported = 0
-                for pid in active_portfolios:
-                    try:
-                        import_result = import_structural_proposals(
-                            ImportStructuralProposalsRequest(
-                                live_portfolio_id=pid,
-                                limit=max(1, min(int(proposal_board_max_proposals), 50)),
-                                max_proposal_age_days=7,
-                                dedupe_by_symbol=True,
-                                skip_stale=True,
-                            )
-                        )
-                        res = (
-                            import_result
-                            if isinstance(import_result, dict)
-                            else {"result": import_result}
-                        )
-                        per_portfolio_results[str(pid)] = res
-                        total_imported += int(res.get("imported_count") or 0)
-                    except HTTPException as hex_exc:
-                        # Per-portfolio failure must not abort the others or the
-                        # whole daily job — the board already published.
-                        log.warning(
-                            "LPA import portfolio %s failed (http): %s",
-                            pid, hex_exc.detail,
-                        )
-                        per_portfolio_results[str(pid)] = {
-                            "error": jsonable_encoder(hex_exc.detail)
-                        }
-                    except Exception as exc:  # noqa: BLE001
-                        log.exception("LPA import portfolio %s failed", pid)
-                        per_portfolio_results[str(pid)] = {"error": str(exc)}
-
                 response["lpa_import_triggered"] = True
-                response["lpa_import_portfolios"] = active_portfolios
-                response["lpa_import_total_imported"] = total_imported
-                response["lpa_import_result"] = per_portfolio_results
-                response["lpa_import_skip_summary"] = _aggregate_lpa_import_skip_summary(
-                    per_portfolio_results
-                )
+                response["lpa_import_portfolios"] = lpa_out["active_portfolios"]
+                response["lpa_import_total_imported"] = lpa_out["total_imported"]
+                response["lpa_import_result"] = lpa_out["per_portfolio_results"]
+                response["lpa_import_skip_summary"] = lpa_out["skip_summary"]
+                response["lpa_healed_chair_done_runs"] = lpa_out["healed_chair_done_runs"]
                 log.info(
-                    "LPA import after capped board: portfolios=%s total_imported=%s",
-                    active_portfolios, total_imported,
+                    "LPA import after daily board: portfolios=%s total_imported=%s healed=%s",
+                    lpa_out["active_portfolios"],
+                    lpa_out["total_imported"],
+                    lpa_out["healed_chair_done_runs"],
                 )
             except Exception as exc:  # noqa: BLE001
                 log.exception("LPA import after board failed")
@@ -760,8 +796,10 @@ SELECT
     lt.expected_date,
     lp.pipeline_date,
     lb.bar_date,
-    DATEDIFF('day', lp.pipeline_date, CURRENT_DATE()) AS pipeline_lag_days,
-    DATEDIFF('day', lb.bar_date, CURRENT_DATE()) AS bar_lag_days
+    -- Lag vs the most recent completed US session (not vs calendar today).
+    -- On Sat/Sun/Mon pre-open, Friday data must read as lag 0 — not 2+ calendar days.
+    GREATEST(DATEDIFF('day', lp.pipeline_date, lt.expected_date), 0) AS pipeline_lag_days,
+    GREATEST(DATEDIFF('day', lb.bar_date, lt.expected_date), 0) AS bar_lag_days
 FROM last_trading lt, last_pipeline lp, latest_bar lb
 """
 
@@ -851,8 +889,9 @@ def run_proposal_board(
     if pipeline_lag > staleness_max_trading_days_lag or bar_lag > staleness_max_trading_days_lag:
         detail = {
             "message": (
-                "Market data or pipeline is stale. Run 'Run Daily Market Update' first "
-                "to refresh data before running the agentic opportunity search."
+                "Market data or pipeline is stale relative to the last US trading session. "
+                "Run 'Run Daily Market Update' first to refresh data before running the "
+                "agentic opportunity search."
             ),
             "expected_trading_date": str(expected_date) if expected_date else None,
             "pipeline_date": str(pipeline_date) if pipeline_date else None,
@@ -942,13 +981,70 @@ def run_proposal_board(
     )
     board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS", "PARTIAL_FAILURE"}
     board_partial = board_status == "PARTIAL_FAILURE"
-    if board_proc.returncode != 0 or board_status not in board_ok_statuses:
+    board_subprocess_failed = board_proc.returncode != 0 or board_status not in board_ok_statuses
+    if board_subprocess_failed:
         log.warning(
             "Phase 4 agentic board failed rc=%s status=%s stderr_tail=%s",
             board_proc.returncode,
             board_status or "?",
             (board_stderr or board_stdout)[-500:],
         )
+        recovery: dict[str, Any] | None = None
+        if import_proposals_to_lpa:
+            try:
+                recovery = _import_proposals_to_active_lpa_portfolios(
+                    fallback_portfolio_id=int(portfolio),
+                    import_limit=max(1, min(int(max_proposals), 50)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("LPA import recovery after board subprocess failure")
+                recovery = {"error": str(exc), "total_imported": 0, "healed_chair_done_runs": 0}
+
+        if recovery and (
+            int(recovery.get("healed_chair_done_runs") or 0) > 0
+            or int(recovery.get("total_imported") or 0) > 0
+        ):
+            log.warning(
+                "Board subprocess failed but recovered: healed=%s imported=%s",
+                recovery.get("healed_chair_done_runs"),
+                recovery.get("total_imported"),
+            )
+            response = {
+                "status": "PARTIAL_SUCCESS",
+                "run_type": "AGENTIC_OPPORTUNITY_SEARCH",
+                "cockpit_run_id": board_run_id,
+                "proposal_board_result": board_payload,
+                "proposal_board_partial": True,
+                "board_subprocess_failed": True,
+                "board_recovery": True,
+                "trade_auto_executed": False,
+                "staleness_check": {
+                    "expected_trading_date": str(expected_date) if expected_date else None,
+                    "pipeline_date": str(pipeline_date) if pipeline_date else None,
+                    "bar_date": str(bar_date) if bar_date else None,
+                    "pipeline_lag_days": pipeline_lag,
+                    "bar_lag_days": bar_lag,
+                },
+                "lpa_import_triggered": True,
+                "lpa_import_portfolios": recovery.get("active_portfolios"),
+                "lpa_import_total_imported": recovery.get("total_imported"),
+                "lpa_import_result": recovery.get("per_portfolio_results"),
+                "lpa_import_skip_summary": recovery.get("skip_summary"),
+                "lpa_healed_chair_done_runs": recovery.get("healed_chair_done_runs"),
+            }
+            _cockpit_run_complete(
+                board_run_id,
+                "SUCCESS",
+                summary={
+                    "run_type": "AGENTIC_OPPORTUNITY_SEARCH",
+                    "board_status": board_status or "SUBPROCESS_FAILED",
+                    "board_partial": True,
+                    "board_recovery": True,
+                    "lpa_import_total_imported": recovery.get("total_imported"),
+                },
+            )
+            return jsonable_encoder(response)
+
         err_msg = (
             "Phase 4 agentic proposal board failed. "
             "Cockpit/Timeline will continue to show the previous authoritative run."
@@ -963,6 +1059,8 @@ def run_proposal_board(
                     "board_payload": board_payload,
                     "board_stdout": board_stdout[-4000:],
                     "board_stderr": board_stderr[-4000:],
+                    "board_recovery_attempted": bool(import_proposals_to_lpa),
+                    "board_recovery": recovery,
                 }
             ),
         )
@@ -987,67 +1085,21 @@ def run_proposal_board(
     response["lpa_import_triggered"] = False
     if import_proposals_to_lpa:
         try:
-            from .live import (
-                ImportStructuralProposalsRequest,
-                import_structural_proposals,
+            lpa_out = _import_proposals_to_active_lpa_portfolios(
+                fallback_portfolio_id=int(portfolio),
+                import_limit=max(1, min(int(max_proposals), 50)),
             )
-
-            conn = get_connection()
-            try:
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    SELECT PORTFOLIO_ID
-                    FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-                    WHERE COALESCE(IS_ACTIVE, TRUE) = TRUE
-                    ORDER BY PORTFOLIO_ID
-                    """
-                )
-                active_portfolios = [int(r[0]) for r in (cur.fetchall() or [])]
-            finally:
-                conn.close()
-
-            if not active_portfolios:
-                active_portfolios = [int(portfolio)]
-
-            per_portfolio_results: dict[str, Any] = {}
-            total_imported = 0
-            for pid in active_portfolios:
-                try:
-                    import_result = import_structural_proposals(
-                        ImportStructuralProposalsRequest(
-                            live_portfolio_id=pid,
-                            limit=max(1, min(int(max_proposals), 50)),
-                            max_proposal_age_days=7,
-                            dedupe_by_symbol=True,
-                            skip_stale=True,
-                        )
-                    )
-                    res = (
-                        import_result
-                        if isinstance(import_result, dict)
-                        else {"result": import_result}
-                    )
-                    per_portfolio_results[str(pid)] = res
-                    total_imported += int(res.get("imported_count") or 0)
-                except HTTPException as hex_exc:
-                    log.warning("LPA import portfolio %s failed (http): %s", pid, hex_exc.detail)
-                    per_portfolio_results[str(pid)] = {"error": jsonable_encoder(hex_exc.detail)}
-                except Exception as exc:
-                    log.exception("LPA import portfolio %s failed", pid)
-                    per_portfolio_results[str(pid)] = {"error": str(exc)}
-
             response["lpa_import_triggered"] = True
-            response["lpa_import_portfolios"] = active_portfolios
-            response["lpa_import_total_imported"] = total_imported
-            response["lpa_import_result"] = per_portfolio_results
-            response["lpa_import_skip_summary"] = _aggregate_lpa_import_skip_summary(
-                per_portfolio_results
-            )
+            response["lpa_import_portfolios"] = lpa_out["active_portfolios"]
+            response["lpa_import_total_imported"] = lpa_out["total_imported"]
+            response["lpa_import_result"] = lpa_out["per_portfolio_results"]
+            response["lpa_import_skip_summary"] = lpa_out["skip_summary"]
+            response["lpa_healed_chair_done_runs"] = lpa_out["healed_chair_done_runs"]
             log.info(
-                "LPA import after capped board: portfolios=%s total_imported=%s",
-                active_portfolios,
-                total_imported,
+                "LPA import after capped board: portfolios=%s total_imported=%s healed=%s",
+                lpa_out["active_portfolios"],
+                lpa_out["total_imported"],
+                lpa_out["healed_chair_done_runs"],
             )
         except Exception as exc:
             log.exception("LPA import after board failed")

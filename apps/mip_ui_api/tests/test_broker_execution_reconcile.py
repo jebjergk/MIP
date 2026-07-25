@@ -111,3 +111,38 @@ def test_avg_price_snake_case_from_execution_payload():
     assert c["category"] == "matched"
     assert c["proposed_status"] == "FILLED"
     assert c["proposed_avg_fill_price"] == 94.91
+
+
+def test_build_missing_close_execution_placeholder():
+    from app.services.broker_execution_reconcile import build_missing_close_execution_placeholders
+
+    rows = build_missing_close_execution_placeholders(
+        [{"symbol": "AAPL", "last_known_qty": 1.0, "last_position_ts": "2026-07-06T16:14:03"}]
+    )
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "AAPL"
+    assert rows[0]["missing_fill"] is True
+    assert rows[0]["status"] == "MISSING_FILL"
+
+
+def test_detect_missing_close_fill_gaps():
+    from unittest.mock import MagicMock, patch
+
+    from app.services.broker_execution_reconcile import detect_missing_close_fill_gaps
+
+    cur = MagicMock()
+    with patch("app.services.broker_execution_reconcile.fetch_all") as mock_fetch:
+        mock_fetch.return_value = [
+            {"SYMBOL": "AAPL", "MAX_ABS_QTY": 1.0, "LAST_POSITION_TS": "2026-07-06"},
+            {"SYMBOL": "COP", "MAX_ABS_QTY": 4.0, "LAST_POSITION_TS": "2026-07-20"},
+        ]
+        gaps = detect_missing_close_fill_gaps(
+            cur=cur,
+            account_id="U24621464",
+            lookback_days=30,
+            held_symbols={"COP"},
+            executions=[{"symbol": "NVDA", "side": "SELL", "close_like": True}],
+        )
+    symbols = {g["symbol"] for g in gaps}
+    assert "AAPL" in symbols
+    assert "COP" not in symbols

@@ -125,6 +125,45 @@ class ShadowIntradaySessionTests(unittest.TestCase):
         self.assertTrue(pic["low_sample_warning"])
         self.assertEqual(pic["bar_count"], 1)
 
+    def test_jnj_like_stale_dossier_reclaim_uses_invalidation_and_held_when_above(self):
+        """Regression: dossier 245 reclaim must not override executable zone / invalidation."""
+        snap = {
+            "SYMBOL": "JNJ",
+            "SIDE": "LONG",
+            "ENTRY_ZONE_JSON": {"low": 254.42, "high": 260.2},
+            "INVALIDATION_JSON": {"level": 251.71, "rule": "BELOW"},
+        }
+        dossier = {
+            "actionability_context": {
+                "confirmation_needed": True,
+                "continuation_quality": "UNCONFIRMED",
+            },
+            "levels": {
+                "broken_resistance_as_support": 245.49,
+                "nearest_resistance": {"level_price": 269.43},
+            },
+        }
+        bars = [
+            _bar_et(9, 30, 261.0, 262.0, 260.5, 261.5, day_offset=24),
+        ]
+        now = datetime(2026, 7, 24, 9, 36, 0)
+        pic = build_shadow_intraday_session_picture(
+            symbol="JNJ",
+            side="LONG",
+            snapshot=snap,
+            dossier_payload=dossier,
+            bar_rows=bars,
+            now=now,
+            fetch_meta={"status": "SUCCESS"},
+        )
+        vs = pic["vs_overnight_dossier"]
+        self.assertEqual(vs["reclaim_level"], 251.71)
+        self.assertEqual(vs["reclaim_level_source"], "invalidation")
+        self.assertEqual(vs["dossier_legacy_reclaim"], 245.49)
+        self.assertEqual(vs["reclaim_status"], "HELD")
+        self.assertEqual(pic["executable_geometry"]["price_vs_entry_zone"], "ABOVE")
+        self.assertTrue(pic["executable_geometry"]["chase_risk"])
+
 
 if __name__ == "__main__":
     unittest.main()

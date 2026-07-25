@@ -92,6 +92,34 @@ trust_best AS (
            BEST_WINDOW
     FROM MIP.APP.STRUCTURAL_SETUP_TRUST
     WHERE EVAL_WINDOW = BEST_WINDOW
+),
+best_setup_proposal AS (
+    -- One proposal per setup: prefer open PROPOSED, then authoritative board run, then newest.
+    SELECT
+        sp.PROPOSAL_ID,
+        sp.SETUP_EVENT_ID,
+        sp.DIRECTION,
+        sp.STATUS,
+        sp.RATIONALE_TEXT,
+        sp.EXECUTION_POLICY_STATUS,
+        sp.EXECUTION_POLICY_REASON,
+        sp.IS_RESEARCH_ONLY,
+        sp.BOARD_RUN_ID                              AS LINKED_PROPOSAL_BOARD_RUN_ID,
+        sp.CREATED_AT                                AS LINKED_PROPOSAL_CREATED_AT,
+        IFF(auth.RUN_ID IS NOT NULL, TRUE, FALSE)    AS LINKED_PROPOSAL_IS_AUTHORITATIVE,
+        ROW_NUMBER() OVER (
+            PARTITION BY sp.SETUP_EVENT_ID, sp.DIRECTION
+            ORDER BY
+                CASE WHEN sp.STATUS = 'PROPOSED' THEN 0 ELSE 1 END,
+                CASE WHEN auth.RUN_ID IS NOT NULL THEN 0 ELSE 1 END,
+                sp.CREATED_AT DESC,
+                sp.PROPOSAL_ID DESC
+        ) AS RN
+    FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
+    LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+      ON auth.RUN_ID = sp.BOARD_RUN_ID
+    WHERE sp.SETUP_EVENT_ID IS NOT NULL
+      AND sp.BOARD_RUN_ID IS NOT NULL
 )
 SELECT
     se.SETUP_EVENT_ID,
@@ -178,6 +206,9 @@ SELECT
     sp.EXECUTION_POLICY_STATUS,
     sp.EXECUTION_POLICY_REASON,
     sp.IS_RESEARCH_ONLY,
+    sp.LINKED_PROPOSAL_BOARD_RUN_ID,
+    sp.LINKED_PROPOSAL_CREATED_AT,
+    sp.LINKED_PROPOSAL_IS_AUTHORITATIVE,
     CASE WHEN sp.PROPOSAL_ID IS NOT NULL THEN TRUE ELSE FALSE END AS BECAME_PROPOSAL,
 
     -- Phase 8: structural coherence signal for the UI. LEVEL_TO_ENTRY_MID_PCT
@@ -316,12 +347,11 @@ SELECT
 FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
 LEFT JOIN MIP.APP.STRUCTURAL_SETUP_OUTCOMES so
   ON so.SETUP_EVENT_ID = se.SETUP_EVENT_ID AND so.EVAL_WINDOW = 20 AND so.EVAL_STATUS = 'SUCCESS'
--- Direction-guarded join: SETUP_EVENT_ID is NULL for cross-direction proposals,
--- so this join naturally excludes contaminated cross-direction links.
-LEFT JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
+-- Direction-guarded join: pick one canonical proposal per setup (see best_setup_proposal).
+LEFT JOIN best_setup_proposal sp
   ON sp.SETUP_EVENT_ID = se.SETUP_EVENT_ID
   AND sp.DIRECTION = se.DIRECTION
-  AND sp.BOARD_RUN_ID IS NOT NULL
+  AND sp.RN = 1
 LEFT JOIN trust_best tb
   ON tb.SETUP_FAMILY = se.SETUP_FAMILY AND tb.MARKET_TYPE = se.MARKET_TYPE
 LEFT JOIN policy_active pa
@@ -382,6 +412,15 @@ SELECT
     sp.EXECUTION_POLICY_STATUS,
     sp.EXECUTION_POLICY_REASON,
     sp.IS_RESEARCH_ONLY,
+    IFF(auth.RUN_ID IS NOT NULL, TRUE, FALSE)              AS IS_AUTHORITATIVE_RUN,
+    IFF(
+        sp.STATUS = 'PROPOSED'
+        AND auth.RUN_ID IS NOT NULL
+        AND COALESCE(sp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
+        AND NOT COALESCE(sp.IS_RESEARCH_ONLY, FALSE),
+        TRUE,
+        FALSE
+    )                                                      AS IS_LPA_IMPORTABLE,
 
     -- ── Evidence setup event fields (may differ in direction) ─────
     sp.SETUP_EVENT_ID,
@@ -426,6 +465,8 @@ LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_ev
   ON se_ev.SETUP_EVENT_ID = sp.PRIMARY_EVIDENCE_SETUP_EVENT_ID
 LEFT JOIN MIP.APP.PORTFOLIO_TRADES pt
   ON pt.PROPOSAL_ID = sp.PROPOSAL_ID
+LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+  ON auth.RUN_ID = sp.BOARD_RUN_ID
 WHERE COALESCE(se_same.MARKET_TYPE, se_ev.MARKET_TYPE) != 'ETF'
   AND sp.BOARD_RUN_ID IS NOT NULL;
 
@@ -517,7 +558,7 @@ SELECT
     sp.SYMBOL,
     se.MARKET_TYPE,
     'PROPOSAL_CREATED'                       AS EVENT_TYPE,
-    sp.SETUP_FAMILY || ' ' || sp.DIRECTION || ' proposal created' AS EVENT_DESCRIPTION,
+    sp.SETUP_FAMILY || ' ' || sp.DIRECTION || ' proposal #' || sp.PROPOSAL_ID::VARCHAR || ' created' AS EVENT_DESCRIPTION,
     sp.SETUP_FAMILY,
     sp.DIRECTION,
     sp.SETUP_EVENT_ID,
@@ -574,14 +615,15 @@ proposal_counts AS (
     --                         and as the "everything the board produced" KPI.
     --   ACTIONABLE_PROPOSALS- subset of ACTIVE that LPA's structural importer
     --                         will accept: EXECUTION_POLICY_STATUS='EXECUTABLE'
-    --                         AND NOT IS_RESEARCH_ONLY. This is what drives the
-    --                         orange "operator-actionable" tile styling so the
-    --                         timeline matches LPA pending-decisions reality.
-    --   RESEARCH_PROPOSALS  - subset of ACTIVE that is research-only / policy-
-    --                         blocked (geometry invalid, short-live disabled,
-    --                         etc.). Surfaced separately so the UI can show a
-    --                         distinct "research" badge instead of pretending
-    --                         these rows are actionable.
+    --                         AND NOT IS_RESEARCH_ONLY AND parent BOARD_RUN_ID
+    --                         is in V_LATEST_AUTHORITATIVE_BOARD_RUN (same gate
+    --                         as live.py _STRUCTURAL_PROPOSAL_QUERY). This drives
+    --                         the orange "operator-actionable" tile styling.
+    --   RESEARCH_PROPOSALS  - subset of ACTIVE that LPA cannot import:
+    --                         policy-blocked / research-only OR from a board run
+    --                         that is not currently authoritative (e.g. CHAIR_DONE
+    --                         recovery rows). Surfaced with dashed styling so the
+    --                         timeline does not promise LPA pending rows.
     SELECT
         sp.SYMBOL,
         se.MARKET_TYPE,
@@ -592,6 +634,7 @@ proposal_counts AS (
                 WHEN sp.STATUS = 'PROPOSED'
                  AND COALESCE(sp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
                  AND NOT COALESCE(sp.IS_RESEARCH_ONLY, FALSE)
+                 AND auth.RUN_ID IS NOT NULL
                 THEN 1
             END
         )                                                                       AS ACTIONABLE_PROPOSALS,
@@ -601,6 +644,7 @@ proposal_counts AS (
                  AND (
                      COALESCE(sp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') != 'EXECUTABLE'
                      OR COALESCE(sp.IS_RESEARCH_ONLY, FALSE)
+                     OR auth.RUN_ID IS NULL
                  )
                 THEN 1
             END
@@ -608,6 +652,8 @@ proposal_counts AS (
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
     JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
       ON se.SETUP_EVENT_ID = COALESCE(sp.SETUP_EVENT_ID, sp.PRIMARY_EVIDENCE_SETUP_EVENT_ID)
+    LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+      ON auth.RUN_ID = sp.BOARD_RUN_ID
     WHERE se.MARKET_TYPE != 'ETF'
       AND sp.BOARD_RUN_ID IS NOT NULL
     GROUP BY sp.SYMBOL, se.MARKET_TYPE

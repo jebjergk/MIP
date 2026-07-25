@@ -25,6 +25,15 @@ function fmtTs(v) {
   return m ? m[1] : s.slice(0, 16)
 }
 
+function reclaimStatusLabel(status) {
+  const s = String(status || '').toUpperCase()
+  if (s === 'INSUFFICIENT_RTH_DATA') return 'Insufficient RTH data (early session)'
+  if (s === 'HELD') return 'Held'
+  if (s === 'FAILED') return 'Failed'
+  if (s === 'PENDING') return 'Pending confirmation'
+  return status ? String(status).replace(/_/g, ' ') : null
+}
+
 export default function IntradaySessionPictureCard({ picture }) {
   if (!picture || typeof picture !== 'object') return null
 
@@ -32,7 +41,11 @@ export default function IntradaySessionPictureCard({ picture }) {
   const verdict = String(picture.verdict_bucket || '').toUpperCase()
   const vs = picture.vs_overnight_dossier || {}
   const reclaimLevel = fmtLevel(vs.reclaim_level)
-  const reclaimStatus = vs.reclaim_status ? String(vs.reclaim_status).replace(/_/g, ' ') : null
+  const reclaimStatus = vs.reclaim_status ? reclaimStatusLabel(vs.reclaim_status) : null
+  const reclaimSource = vs.reclaim_level_source ? String(vs.reclaim_level_source).replace(/_/g, ' ') : null
+  const execGeo = picture.executable_geometry || {}
+  const execZoneLow = fmtLevel(execGeo.entry_zone_low)
+  const execZoneHigh = fmtLevel(execGeo.entry_zone_high)
   const overnightBinding = vs.overnight_flags_still_binding
   const ibFetch = picture.ib_fetch || {}
   const ibPort = ibFetch.port ?? ibFetch.ib_connect?.port
@@ -80,8 +93,17 @@ export default function IntradaySessionPictureCard({ picture }) {
             ) : null}
             {reclaimStatus && reclaimLevel ? (
               <>
-                <dt>Reclaim {reclaimLevel}</dt>
+                <dt>Support {reclaimLevel}{reclaimSource ? ` (${reclaimSource})` : ''}</dt>
                 <dd>{reclaimStatus}</dd>
+              </>
+            ) : null}
+            {execZoneLow && execZoneHigh ? (
+              <>
+                <dt>Executable zone</dt>
+                <dd>
+                  {execZoneLow}–{execZoneHigh}
+                  {execGeo.chase_risk ? ' · above zone (do not chase)' : ''}
+                </dd>
               </>
             ) : null}
             {overnightBinding != null ? (

@@ -20,8 +20,8 @@
         predicate the LPA structural importer applies in
         live.py / _STRUCTURAL_PROPOSAL_QUERY (STATUS='PROPOSED'
         AND EXECUTION_POLICY_STATUS='EXECUTABLE' AND NOT
-        IS_RESEARCH_ONLY, with MARKET_TYPE != 'ETF' and an
-        agentic BOARD_RUN_ID).
+        IS_RESEARCH_ONLY, MARKET_TYPE != 'ETF', agentic BOARD_RUN_ID,
+        AND BOARD_RUN_ID in V_LATEST_AUTHORITATIVE_BOARD_RUN).
      4) Symbols currently surfaced with RESEARCH_PROPOSALS > 0 —
         diagnostic listing so operators can see which symbols
         the board produced research-only output for.
@@ -49,14 +49,17 @@ SELECT 'ACTIVE_SPLIT_BALANCED' AS CHECK_NAME, COUNT(*) AS MISMATCH_ROWS
                             + COALESCE(RESEARCH_PROPOSALS, 0));
 -- Expect 0.
 
--- 3. Per-symbol ACTIONABLE count must equal the LPA-importer-eligible set.
+-- 3. Per-symbol ACTIONABLE count must equal the LPA-importer-eligible set
+--    (EXECUTABLE + not research-only + authoritative board run).
 WITH expected AS (
     SELECT sp.SYMBOL,
            se.MARKET_TYPE,
            COUNT(*) AS EXPECTED_ACTIONABLE
       FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
       JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
-        ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
+        ON se.SETUP_EVENT_ID = COALESCE(sp.SETUP_EVENT_ID, sp.PRIMARY_EVIDENCE_SETUP_EVENT_ID)
+      JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+        ON auth.RUN_ID = sp.BOARD_RUN_ID
      WHERE sp.STATUS = 'PROPOSED'
        AND sp.BOARD_RUN_ID IS NOT NULL
        AND se.MARKET_TYPE != 'ETF'
@@ -78,11 +81,7 @@ SELECT 'TIMELINE_LPA_ACTIONABLE_ALIGNED' AS CHECK_NAME,
  WHERE COALESCE(v.ACTIONABLE_PROPOSALS, 0) <> COALESCE(e.EXPECTED_ACTIONABLE, 0);
 -- Expect MISMATCH_COUNT = 0.
 
--- 4. Diagnostic: symbols that have research-only proposals right now.
---    Helpful when an operator wonders why a timeline tile shows the
---    dashed research style but no LPA pending row exists. Returns the
---    EXECUTION_POLICY_REASON breakdown so the board geometry issue is
---    immediately visible.
+-- 4. Diagnostic: proposals LPA cannot import (policy-blocked or non-authoritative run).
 SELECT
     'RESEARCH_ONLY_PROPOSALS_NOW' AS CHECK_NAME,
     sp.SYMBOL,
@@ -93,11 +92,14 @@ SELECT
     sp.IS_RESEARCH_ONLY,
     sp.CREATED_AT
   FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
+  LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+    ON auth.RUN_ID = sp.BOARD_RUN_ID
  WHERE sp.STATUS = 'PROPOSED'
    AND sp.BOARD_RUN_ID IS NOT NULL
    AND (
         COALESCE(sp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') != 'EXECUTABLE'
         OR COALESCE(sp.IS_RESEARCH_ONLY, FALSE)
+        OR auth.RUN_ID IS NULL
    )
  ORDER BY sp.CREATED_AT DESC, sp.SYMBOL
  LIMIT 50;

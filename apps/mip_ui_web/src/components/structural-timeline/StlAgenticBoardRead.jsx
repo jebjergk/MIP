@@ -12,10 +12,24 @@ export default function StlAgenticBoardRead({ proposals, get }) {
       const st = String(get(p, 'PROPOSAL_STATUS') || get(p, 'STATUS') || '').toUpperCase()
       return st === 'PROPOSED'
     })
+    const rank = (p) => {
+      const importable = Boolean(get(p, 'IS_LPA_IMPORTABLE'))
+      const authoritative = Boolean(get(p, 'IS_AUTHORITATIVE_RUN'))
+      const created = new Date(get(p, 'PROPOSAL_CREATED_AT') || get(p, 'CREATED_AT') || 0).getTime()
+      return [
+        importable ? 0 : 1,
+        authoritative ? 0 : 1,
+        -created,
+        -Number(get(p, 'PROPOSAL_ID') || 0),
+      ]
+    }
     proposed.sort((a, b) => {
-      const ta = new Date(get(a, 'PROPOSAL_CREATED_AT') || get(a, 'CREATED_AT') || 0).getTime()
-      const tb = new Date(get(b, 'PROPOSAL_CREATED_AT') || get(b, 'CREATED_AT') || 0).getTime()
-      return tb - ta
+      const ra = rank(a)
+      const rb = rank(b)
+      for (let i = 0; i < ra.length; i += 1) {
+        if (ra[i] !== rb[i]) return ra[i] - rb[i]
+      }
+      return 0
     })
     return proposed
   }, [proposals, get])
@@ -85,10 +99,16 @@ export default function StlAgenticBoardRead({ proposals, get }) {
     get(selectedRow, 'EXECUTION_POLICY_STATUS') || 'EXECUTABLE',
   ).toUpperCase()
   const selectedIsResearchOnly = Boolean(get(selectedRow, 'IS_RESEARCH_ONLY'))
+  const selectedIsLpaImportable = Boolean(get(selectedRow, 'IS_LPA_IMPORTABLE'))
+  const selectedIsAuthoritative = Boolean(get(selectedRow, 'IS_AUTHORITATIVE_RUN'))
   const selectedPolicyReason =
     get(selectedRow, 'EXECUTION_POLICY_REASON') || null
-  const isResearchOnly =
-    selectedExecPolicy !== 'EXECUTABLE' || selectedIsResearchOnly
+  const isResearchOnly = !selectedIsLpaImportable
+    || selectedExecPolicy !== 'EXECUTABLE'
+    || selectedIsResearchOnly
+  const researchBannerDetail = !selectedIsAuthoritative && selectedExecPolicy === 'EXECUTABLE' && !selectedIsResearchOnly
+    ? 'SFP / board run published proposals but stalled at CHAIR_DONE (never marked COMPLETE). LPA ignores these until the run is auto-finalized — refresh LPA or re-run SFP; the importer heals stale runs on load.'
+    : `Policy: ${selectedExecPolicy}${selectedPolicyReason ? ` (${selectedPolicyReason})` : ''}${selectedIsResearchOnly ? ' · IS_RESEARCH_ONLY=true' : ''}`
 
   return (
     <section className="stl-agentic-read">
@@ -124,9 +144,7 @@ export default function StlAgenticBoardRead({ proposals, get }) {
           LPA pending decisions.
           {' '}
           <span className="stl-research-banner-detail">
-            Policy: {selectedExecPolicy}
-            {selectedPolicyReason ? ` (${selectedPolicyReason})` : ''}
-            {selectedIsResearchOnly ? ' · IS_RESEARCH_ONLY=true' : ''}
+            {researchBannerDetail}
           </span>
         </div>
       )}

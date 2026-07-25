@@ -2214,6 +2214,7 @@ def _finalize_stale_chair_done_runs(cur, max_age_minutes: int = 10) -> int:
            SET RUN_STATUS = 'COMPLETE',
                FINISHED_AT = CURRENT_TIMESTAMP(),
                FINAL_PROPOSAL_COUNT = pub.PUB_COUNT,
+               CANDIDATE_COUNT = GREATEST(COALESCE(r.CANDIDATE_COUNT, 0), pub.PUB_COUNT),
                ERROR_JSON = OBJECT_CONSTRUCT(
                    'reason_code', 'AUTO_FINALIZED_STALE_CHAIR_DONE',
                    'message', 'Run stalled at CHAIR_DONE after publish; auto-finalized on next board start.',
@@ -2234,7 +2235,16 @@ def _finalize_stale_chair_done_runs(cur, max_age_minutes: int = 10) -> int:
         """,
         {"max_age": max_age_minutes},
     )
-    return int(cur.rowcount or 0)
+    finalized = int(cur.rowcount or 0)
+    if finalized:
+        healed = _mirror_structural_proposal_snapshots(cur)
+        if healed:
+            logger.warning(
+                "phase4 auto-finalize mirror_structural_snapshots "
+                "healed=%d rows for stale CHAIR_DONE runs",
+                healed,
+            )
+    return finalized
 
 
 def _normalize_published_broker_stops(cur, run_id: str) -> int:
@@ -2549,6 +2559,65 @@ def _reconcile_stale_execution_requests(
     return int(cur.rowcount or 0)
 
 
+def _mirror_structural_proposal_snapshots(
+    cur,
+    run_id: Optional[str] = None,
+) -> int:
+    """Idempotent mirror STRUCTURAL_TRADE_PROPOSALS -> STRUCTURAL_PROPOSAL_SNAPSHOT.
+
+    Called immediately after proposal INSERT so a subprocess death during the
+    later geometry/policy UPDATE chain cannot leave LPA rows without the frozen
+    snapshot required by committee2 orchestrate (NO_SNAPSHOT).
+    """
+    run_filter = "AND p.BOARD_RUN_ID = %(run_id)s" if run_id else ""
+    cur.execute(
+        f"""
+        INSERT INTO MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT (
+            PROPOSAL_ID, PROPOSAL_TS, SYMBOL, SIDE, SETUP_FAMILY,
+            STRUCTURAL_STATE, REGIME_STATE, TRUST_LABEL,
+            ENTRY_ZONE_JSON, INVALIDATION_JSON, PATH_METRICS_JSON, MFE_MAE_JSON,
+            TRAILING_STYLE, PROPOSAL_SUMMARY_JSON
+        )
+        SELECT
+            p.PROPOSAL_ID, p.CREATED_AT, p.SYMBOL, p.DIRECTION, p.SETUP_FAMILY,
+            COALESCE(
+                p.BOARD_PAYLOAD_JSON:dossier_payload:structure:structural_state::STRING,
+                p.COMMITTEE_PAYLOAD:dossier_payload:structure:structural_state::STRING
+            ),
+            COALESCE(
+                p.BOARD_PAYLOAD_JSON:dossier_payload:regime:tags:trend_regime::STRING,
+                p.COMMITTEE_PAYLOAD:dossier_payload:regime:tags:trend_regime::STRING
+            ),
+            'AGENTIC',
+            OBJECT_CONSTRUCT('low', p.ENTRY_ZONE_LOW, 'high', p.ENTRY_ZONE_HIGH),
+            OBJECT_CONSTRUCT('level', p.PRICE_INVALIDATION_LEVEL, 'rule', p.INVALIDATION_RULE),
+            OBJECT_CONSTRUCT(
+                'meaningful_hit_rate', p.MEANINGFUL_HIT_RATE,
+                'path_survival_hit_rate', p.PATH_SURVIVAL_HIT_RATE,
+                'mfe_mae_ratio', p.MFE_MAE_RATIO,
+                'primary_evidence_setup_event_id', p.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
+                'primary_evidence_setup_event_id_role', 'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE'
+            ),
+            OBJECT_CONSTRUCT(
+                'mfe_mae_ratio', p.MFE_MAE_RATIO,
+                'meaningful_hit_rate', p.MEANINGFUL_HIT_RATE,
+                'path_survival_hit_rate', p.PATH_SURVIVAL_HIT_RATE
+            ),
+            p.TRAIL_STYLE,
+            p.COMMITTEE_PAYLOAD
+        FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+        WHERE p.BOARD_RUN_ID IS NOT NULL
+          {run_filter}
+          AND NOT EXISTS (
+              SELECT 1 FROM MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT s
+              WHERE s.PROPOSAL_ID = p.PROPOSAL_ID
+          )
+        """,
+        {"run_id": run_id} if run_id else {},
+    )
+    return int(cur.rowcount or 0)
+
+
 def _publish_to_structural(
     cur, run_id: str, portfolio_id: Optional[int], max_proposals: int,
     short_publication_allowed: bool = False,
@@ -2822,6 +2891,13 @@ def _publish_to_structural(
         {"run_id": run_id},
     )
 
+    mirrored = _mirror_structural_proposal_snapshots(cur, run_id)
+    if mirrored:
+        logger.info(
+            "phase4 mirror_structural_snapshots run=%s inserted=%d",
+            run_id, mirrored,
+        )
+
     # Any PENDING row that did not insert is marked SKIPPED_GUARDRAIL.
     _finalize_unpublished_slate(
         cur, run_id, portfolio_id, short_publication_allowed, ibkr_account_mode,
@@ -3038,56 +3114,9 @@ def _publish_to_structural(
     )
     skipped = cur.fetchone()[0] or 0
 
-    # Mirror published rows into STRUCTURAL_PROPOSAL_SNAPSHOT for audit lineage.
-    cur.execute(
-        """
-        INSERT INTO MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT (
-            PROPOSAL_ID, PROPOSAL_TS, SYMBOL, SIDE, SETUP_FAMILY,
-            STRUCTURAL_STATE, REGIME_STATE, TRUST_LABEL,
-            ENTRY_ZONE_JSON, INVALIDATION_JSON, PATH_METRICS_JSON, MFE_MAE_JSON,
-            TRAILING_STYLE, PROPOSAL_SUMMARY_JSON
-        )
-        SELECT
-            p.PROPOSAL_ID, p.CREATED_AT, p.SYMBOL, p.DIRECTION, p.SETUP_FAMILY,
-            -- BOARD_PAYLOAD_JSON embeds dossier_payload at publish time.
-            -- COMMITTEE_PAYLOAD for Phase 4 agentic proposals does NOT
-            -- contain dossier_payload, so the legacy path always resolved
-            -- to NULL. COALESCE keeps backward compatibility with any
-            -- legacy committee paths that still embed dossier_payload.
-            COALESCE(
-                p.BOARD_PAYLOAD_JSON:dossier_payload:structure:structural_state::STRING,
-                p.COMMITTEE_PAYLOAD:dossier_payload:structure:structural_state::STRING
-            ),
-            COALESCE(
-                p.BOARD_PAYLOAD_JSON:dossier_payload:regime:tags:trend_regime::STRING,
-                p.COMMITTEE_PAYLOAD:dossier_payload:regime:tags:trend_regime::STRING
-            ),
-            'AGENTIC',
-            OBJECT_CONSTRUCT('low', p.ENTRY_ZONE_LOW, 'high', p.ENTRY_ZONE_HIGH),
-            OBJECT_CONSTRUCT('level', p.PRICE_INVALIDATION_LEVEL, 'rule', p.INVALIDATION_RULE),
-            OBJECT_CONSTRUCT(
-                'meaningful_hit_rate', p.MEANINGFUL_HIT_RATE,
-                'path_survival_hit_rate', p.PATH_SURVIVAL_HIT_RATE,
-                'mfe_mae_ratio', p.MFE_MAE_RATIO,
-                'primary_evidence_setup_event_id', p.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
-                'primary_evidence_setup_event_id_role', 'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE'
-            ),
-            OBJECT_CONSTRUCT(
-                'mfe_mae_ratio', p.MFE_MAE_RATIO,
-                'meaningful_hit_rate', p.MEANINGFUL_HIT_RATE,
-                'path_survival_hit_rate', p.PATH_SURVIVAL_HIT_RATE
-            ),
-            p.TRAIL_STYLE,
-            p.COMMITTEE_PAYLOAD
-        FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
-        WHERE p.BOARD_RUN_ID = %(run_id)s
-          AND NOT EXISTS (
-              SELECT 1 FROM MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT s
-              WHERE s.PROPOSAL_ID = p.PROPOSAL_ID
-          )
-        """,
-        {"run_id": run_id},
-    )
+    # Belt-and-braces: catch any proposals inserted above that somehow missed
+    # the early mirror (should always be 0 rows after the early call).
+    _mirror_structural_proposal_snapshots(cur, run_id)
     return int(published), int(skipped), int(research_published)
 
 
@@ -3328,6 +3357,12 @@ async def orchestrate_phase4_board(
                     "phase4 auto-finalized %d stale CHAIR_DONE runs "
                     "(had published proposals but never marked COMPLETE) before start run=%s",
                     auto_finalized, run_id,
+                )
+            healed_snapshots = _mirror_structural_proposal_snapshots(cur)
+            if healed_snapshots:
+                logger.warning(
+                    "phase4 startup mirror_structural_snapshots healed=%d orphan rows before run=%s",
+                    healed_snapshots, run_id,
                 )
             cur.execute(
                 """

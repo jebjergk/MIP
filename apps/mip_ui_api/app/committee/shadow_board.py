@@ -32,6 +32,7 @@ from app.config import get_snowflake_config
 from app.db import fetch_all, get_connection
 
 from .shadow_intraday_session import build_shadow_intraday_session_picture
+from .shadow_trade_geometry import normalize_chair_ruling_for_geometry
 from .shadow_types import (
     ChallengeTurn,
     ConflictEntry,
@@ -2156,6 +2157,11 @@ async def orchestrate_shadow_board(
             user=user,
             pk_path=pk_path,
             timeout=timeout_sec,
+        )
+        chair_ruling = normalize_chair_ruling_for_geometry(
+            chair_ruling,
+            pack.slices if pack else None,
+            intraday_picture,
         )
         result.chair = chair_ruling
         result.shadow_stance = chair_ruling.shadow_stance

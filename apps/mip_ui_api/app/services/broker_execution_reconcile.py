@@ -163,12 +163,124 @@ def fetch_deduped_executions(cur, account_id: str, lookback_days: int) -> list[d
           )
           order by SNAPSHOT_TS desc
         ) = 1
-        order by SNAPSHOT_TS desc
+        order by coalesce(
+          try_to_timestamp(PAYLOAD:time::string),
+          SNAPSHOT_TS
+        ) desc nulls last
         """,
         (account_id, int(lookback_days)),
     )
     rows = fetch_all(cur)
     return [dict(x) for x in (rows or []) if isinstance(x, dict)]
+
+
+def detect_missing_close_fill_gaps(
+    cur,
+    account_id: str,
+    lookback_days: int,
+    held_symbols: set[str],
+    executions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Symbols that held a non-zero broker position in the lookback window but are
+    flat now without any logged close-like fill in *executions*.
+    """
+    account_id = str(account_id or "").strip()
+    if not account_id:
+        return []
+    lookback_days = max(1, int(lookback_days))
+    held_upper = {str(s or "").upper().strip() for s in (held_symbols or set()) if str(s or "").strip()}
+
+    cur.execute(
+        """
+        select
+          upper(SYMBOL) as SYMBOL,
+          max(abs(POSITION_QTY)) as MAX_ABS_QTY,
+          max(SNAPSHOT_TS) as LAST_POSITION_TS
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        where SNAPSHOT_TYPE = 'POSITION'
+          and IBKR_ACCOUNT_ID = %s
+          and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+          and coalesce(POSITION_QTY, 0) <> 0
+        group by 1
+        """,
+        (account_id, lookback_days),
+    )
+    position_rows = fetch_all(cur) or []
+
+    closed_symbols: set[str] = set()
+    for ex in executions or []:
+        sym = str(ex.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        ctx = str(ex.get("execution_context") or "").upper()
+        side = str(ex.get("side") or "").upper()
+        if ex.get("close_like") or ctx in {"CLOSE_LONG", "CLOSE_SHORT"}:
+            closed_symbols.add(sym)
+        elif side == "SELL":
+            closed_symbols.add(sym)
+
+    gaps: list[dict[str, Any]] = []
+    for row in position_rows:
+        sym = str(row.get("SYMBOL") or "").upper().strip()
+        if not sym or sym in held_upper or sym in closed_symbols:
+            continue
+        max_qty = row.get("MAX_ABS_QTY")
+        try:
+            qty_val = float(max_qty) if max_qty is not None else None
+        except (TypeError, ValueError):
+            qty_val = None
+        if qty_val is None or qty_val <= 0:
+            continue
+        last_ts = row.get("LAST_POSITION_TS")
+        gaps.append(
+            {
+                "symbol": sym,
+                "last_known_qty": qty_val,
+                "last_position_ts": last_ts.isoformat() if hasattr(last_ts, "isoformat") else last_ts,
+            }
+        )
+    gaps.sort(key=lambda g: str(g.get("last_position_ts") or ""), reverse=True)
+    return gaps
+
+
+def build_missing_close_execution_placeholders(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Surface flat symbols with no close fill in the Trades ledger (operator-visible drift)."""
+    placeholders: list[dict[str, Any]] = []
+    for gap in gaps or []:
+        sym = str(gap.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        qty = gap.get("last_known_qty")
+        last_ts = gap.get("last_position_ts")
+        placeholders.append(
+            {
+                "order_id": f"MISSING_CLOSE_{sym}",
+                "action_id": None,
+                "broker_order_id": None,
+                "symbol": sym,
+                "market_type": None,
+                "side": "SELL",
+                "action_intent": "EXIT",
+                "execution_context": "CLOSE_LONG",
+                "close_like": True,
+                "qty_filled": float(qty) if qty is not None else None,
+                "avg_fill_price": None,
+                "realized_pnl": None,
+                "realized_pnl_is_estimate": False,
+                "commission": None,
+                "fee_source": None,
+                "status": "MISSING_FILL",
+                "execution_ts": last_ts,
+                "source": "POSITION_GAP_INFERRED",
+                "missing_fill": True,
+                "missing_fill_reason": (
+                    "Broker position went flat but no SELL fill is in MIP snapshots for this lookback. "
+                    "Click Refresh From IB; if still missing, verify in IBKR Activity and run execution reconcile."
+                ),
+            }
+        )
+    return placeholders
 
 
 def fetch_live_orders_for_portfolio(cur, portfolio_id: int, lookback_days: int) -> list[dict[str, Any]]:

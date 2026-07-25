@@ -13,8 +13,10 @@
 --         board evaluated candidates and may have published some proposals
 --         despite invalid dossiers elsewhere in the run.
 --
---   (b) COALESCE(CANDIDATE_COUNT, 0) > 0
+--   (b) COALESCE(CANDIDATE_COUNT, 0) > 0 OR FINAL_PROPOSAL_COUNT > 0
 --       — separates legitimate chair evaluation from empty-evidence early exit.
+--         Auto-finalized CHAIR_DONE recovery rows may have CANDIDATE_COUNT=0
+--         until healed; published proposal count is sufficient authority signal.
 --
 --   (c) OUTPUT_ERROR tolerance — a run with PROPOSAL_BOARD_OUTPUT_ERROR rows
 --       is still authoritative when it published at least one PROPOSED row to
@@ -44,7 +46,10 @@ WITH qualifying_runs AS (
         r.POLICY_VERSION
     FROM MIP.APP.PROPOSAL_BOARD_RUN r
     WHERE r.RUN_STATUS IN ('COMPLETE', 'PARTIAL_FAILURE')
-      AND COALESCE(r.CANDIDATE_COUNT, 0) > 0
+      AND (
+            COALESCE(r.CANDIDATE_COUNT, 0) > 0
+            OR COALESCE(r.FINAL_PROPOSAL_COUNT, 0) > 0
+          )
       AND (
             NOT EXISTS (
                 SELECT 1

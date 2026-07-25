@@ -298,7 +298,7 @@ export default function StructuralMarketTimeline() {
                 )
                 if (propResearch > 0) {
                   propBadgeParts.push(
-                    `${propResearch} research-only proposal${propResearch === 1 ? '' : 's'} (board produced but blocked from LPA — geometry/policy)`,
+                    `${propResearch} non-LPA proposal${propResearch === 1 ? '' : 's'} (research-only, policy-blocked, or non-authoritative board run)`,
                   )
                 }
                 if (propLifetime > propActive) {

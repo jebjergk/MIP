@@ -539,6 +539,16 @@ export default function LivePortfolioActivity() {
       const qs = selectedPortfolioId ? `?portfolio_id=${selectedPortfolioId}` : ''
       const resp = await fetch(`${API_BASE}/live/snapshot/refresh${qs}`, { method: 'POST' })
       if (!resp.ok) throw new Error(`Broker refresh failed (${resp.status})`)
+      const refreshData = await resp.json().catch(() => null)
+      const imp = refreshData?.structural_import
+      if (imp?.imported_count > 0) {
+        setNotice(
+          `Broker synced — imported ${imp.imported_count} structural proposal(s) into pending decisions.`,
+        )
+      } else if (imp?.attempted && imp?.ok === false) {
+        const msg = imp?.error?.message || imp?.error || 'proposal import failed'
+        setNotice(`Broker synced but structural import failed: ${String(msg).slice(0, 240)}`)
+      }
       await load()
     } catch (e) {
       setError(e.message || 'Broker refresh failed.')
@@ -1707,6 +1717,10 @@ export default function LivePortfolioActivity() {
   const unmappedExecutionCount = Number(readiness?.unmapped_execution_count || 0)
   const unmappedOnFlatSymbols = Number(readiness?.unmapped_on_flat_symbols_count || 0)
   const unmappedSymbols = Array.isArray(readiness?.unmapped_execution_symbols) ? readiness.unmapped_execution_symbols : []
+  const missingCloseFillCount = Number(readiness?.missing_close_fill_count || 0)
+  const missingCloseFillSymbols = Array.isArray(readiness?.missing_close_fill_symbols)
+    ? readiness.missing_close_fill_symbols
+    : []
   const outsideHours = readiness.market_open === false
   const posCount = openPositions.length
   const totalMarketValue = openPositions.reduce((sum, p) => sum + Number(p?.MARKET_VALUE || 0), 0)
@@ -1967,6 +1981,15 @@ export default function LivePortfolioActivity() {
               {unmappedOnFlatSymbols} execution{unmappedOnFlatSymbols === 1 ? '' : 's'}). Those are treated as historical
               lineage gaps and do not block trading. If you add a new position in IB without MIP, unmapped fills on an
               open symbol will block again until lineage is aligned.
+            </div>
+          ) : null}
+          {missingCloseFillCount > 0 ? (
+            <div className="lpa-warning-inline" role="alert">
+              {missingCloseFillCount} closed position{missingCloseFillCount === 1 ? '' : 's'} in IB have no SELL fill
+              recorded in MIP for this lookback
+              {missingCloseFillSymbols.length ? ` (${missingCloseFillSymbols.join(', ')})` : ''}.
+              Use <b>Refresh From IB</b> first. Rows marked <b>Missing fill</b> in Trades are placeholders — verify
+              prices and P&amp;L in IBKR Activity.
             </div>
           ) : null}
           <div className="lpa-kpis">
@@ -3344,8 +3367,9 @@ export default function LivePortfolioActivity() {
                       {executionsChrono.length === 0 && <tr><td colSpan={6}>No executions yet.</td></tr>}
                       {executionsChrono.map((e) => {
                         const side = String(e.side || '').toUpperCase()
-                        const sideLabel = formatExecutionSideLabel(e)
+                        const sideLabel = e.missing_fill ? 'SELL (MISSING FILL)' : formatExecutionSideLabel(e)
                         const pnlCtx = executionPnlContext(e)
+                        const isMissingFill = Boolean(e.missing_fill) || String(e.status || '').toUpperCase() === 'MISSING_FILL'
                         const qty = Number(e.qty_filled || 0)
                         const px = Number(e.avg_fill_price || 0)
                         const notional = Number.isFinite(qty) && Number.isFinite(px) ? Math.abs(qty * px) : null
@@ -3360,17 +3384,22 @@ export default function LivePortfolioActivity() {
                         const favorable = realizedPnl != null && realizedPnl > 0
                         const unfavorable = realizedPnl != null && realizedPnl < 0
                         return (
-                          <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
+                          <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`} className={isMissingFill ? 'lpa-row--missing-fill' : undefined}>
                             <td>
                               <div><b>{formatSymbolLabel(e.symbol, e.market_type)}</b></div>
-                              <div className="lpa-subtle">{fmtTs(e.execution_ts)}</div>
+                              <div className="lpa-subtle">{isMissingFill ? 'Close detected — fill not synced' : fmtTs(e.execution_ts)}</div>
                             </td>
-                            <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}`}>{sideLabel}</span></td>
+                            <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}${isMissingFill ? ' lpa-side-chip--missing' : ''}`}>{sideLabel}</span></td>
                             <td>{fmtNum(e.qty_filled, 0)}</td>
                             <td>{fmtNum(notional, 2)}</td>
                             <td className="lpa-subtle">{commission != null ? fmtNum(commission, 2) : '—'}</td>
                             <td title={pnlTitle}>
-                              {realizedPnl == null ? (
+                              {isMissingFill ? (
+                                <div className="lpa-pnl-stack lpa-pnl-stack--na">
+                                  <span className="lpa-subtle">Missing fill</span>
+                                  <span className="lpa-pnl-fill-hint">{e.missing_fill_reason || 'Refresh From IB or check IBKR Activity for this close.'}</span>
+                                </div>
+                              ) : realizedPnl == null ? (
                                 <div className="lpa-pnl-stack lpa-pnl-stack--na">
                                   <span className="lpa-subtle">—</span>
                                   <span className="lpa-pnl-fill-hint">

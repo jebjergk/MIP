@@ -15,6 +15,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from app.committee.engine import _entry_zone, _f, _invalidation, invalidation_breached
+from app.committee.shadow_trade_geometry import (
+    price_vs_entry_zone,
+    resolve_execution_reclaim_level,
+)
 from app.services.ibkr_live_bars import infer_ib_market_type, resolve_live_bars_connect, run_agent_ibkr_live_bars
 
 logger = logging.getLogger(__name__)
@@ -229,14 +233,33 @@ def _rejection_at_overhead(bars: List[Dict[str, Any]], side: str, overhead: Opti
     return lower / rng > 0.45
 
 
-def _reclaim_status(side: str, bars: List[Dict[str, Any]], reclaim_level: Optional[float]) -> str:
-    if reclaim_level is None or not bars:
+def _reclaim_status(
+    side: str,
+    bars: List[Dict[str, Any]],
+    reclaim_level: Optional[float],
+    *,
+    reference_price: Optional[float] = None,
+) -> str:
+    if reclaim_level is None:
         return "NOT_APPLICABLE"
+    side_u = (side or "LONG").upper()
+    ref = reference_price
+    if ref is None and bars:
+        closes = [float(b["c"]) for b in bars if b.get("c") is not None]
+        if closes:
+            ref = closes[-1]
+    if ref is not None:
+        if side_u == "LONG" and float(ref) >= float(reclaim_level) * 0.999:
+            return "HELD"
+        if side_u == "SHORT" and float(ref) <= float(reclaim_level) * 1.001:
+            return "HELD"
+    if not bars:
+        return "INSUFFICIENT_RTH_DATA"
     closes = [float(b["c"]) for b in bars if b.get("c") is not None]
     if len(closes) < 2:
-        return "PENDING"
+        return "INSUFFICIENT_RTH_DATA"
     tail = closes[-2:]
-    if side.upper() == "LONG":
+    if side_u == "LONG":
         if all(c >= reclaim_level * 0.999 for c in tail):
             return "HELD"
         if closes[-1] < reclaim_level * 0.997:
@@ -364,8 +387,17 @@ def build_shadow_intraday_session_picture(
     wick_noise = _wick_noise_label(rows, side_u)
 
     dossier_payload = dossier_payload or {}
-    act_ctx, reclaim_level, overhead = _extract_dossier_levels(dossier_payload)
-    reclaim = _reclaim_status(side_u, rows, reclaim_level)
+    act_ctx, _, overhead = _extract_dossier_levels(dossier_payload)
+    reclaim_level, reclaim_source, dossier_legacy_reclaim = resolve_execution_reclaim_level(
+        side_u,
+        zone_low=zone_low,
+        zone_high=zone_high,
+        inv_level=inv_level,
+        dossier_payload=dossier_payload,
+        last_price=last_px,
+    )
+    reclaim = _reclaim_status(side_u, rows, reclaim_level, reference_price=last_px)
+    px_vs_zone = price_vs_entry_zone(last_px, zone_low, zone_high)
     rejection = _rejection_at_overhead(rows, side_u, overhead)
     session_char = _session_character(side_u, closes, chop, choppy)
 
@@ -378,26 +410,37 @@ def build_shadow_intraday_session_picture(
 
     low_sample = len(rows) < _MIN_BARS_FOR_HIGH_CONF
     hostile_overnight = _overnight_hostile(act_ctx)
+    reclaim_unconfirmed = reclaim in ("PENDING", "INSUFFICIENT_RTH_DATA", "FAILED")
 
     verdict = VERDICT_MIXED
     if breach or (choppy and not aligned):
         verdict = VERDICT_CHALLENGES
+    elif px_vs_zone == "ABOVE":
+        # Price above executable entry ceiling — chasing; do not substantiate immediate entry.
+        verdict = VERDICT_CHALLENGES if not low_sample else VERDICT_MIXED
     elif rejection and hostile_overnight:
         verdict = VERDICT_CHALLENGES
     elif aligned and not choppy and wick_noise != "HIGH":
         if hostile_overnight:
             if reclaim in ("HELD", "NOT_APPLICABLE"):
                 verdict = VERDICT_SUPPORTS
-            elif reclaim == "PENDING" and low_sample:
+            elif reclaim in ("PENDING", "INSUFFICIENT_RTH_DATA") and low_sample:
                 verdict = VERDICT_MIXED
             else:
                 verdict = VERDICT_MIXED
         else:
             verdict = VERDICT_SUPPORTS
     elif aligned and session_char == "ORDERLY_CONTINUATION":
-        verdict = VERDICT_MIXED if hostile_overnight and reclaim != "HELD" else VERDICT_SUPPORTS
+        verdict = VERDICT_MIXED if hostile_overnight and reclaim_unconfirmed else VERDICT_SUPPORTS
 
-    if zone_low is not None and zone_high is not None and zone_low <= last_px <= zone_high and aligned and not choppy:
+    if (
+        zone_low is not None
+        and zone_high is not None
+        and zone_low <= last_px <= zone_high
+        and aligned
+        and not choppy
+        and px_vs_zone != "ABOVE"
+    ):
         if not hostile_overnight or reclaim in ("HELD", "NOT_APPLICABLE"):
             verdict = VERDICT_SUPPORTS
 
@@ -436,7 +479,14 @@ def build_shadow_intraday_session_picture(
         f"{'aligned' if aligned else 'not aligned'} with {side_u}."
     )
     if reclaim_level is not None and reclaim != "NOT_APPLICABLE":
-        operator += f" Reclaim {reclaim_level:.2f}: {reclaim.lower()}."
+        status_label = reclaim.lower().replace("_", " ")
+        if reclaim == "INSUFFICIENT_RTH_DATA":
+            status_label = "insufficient RTH data (early session — not pending reclaim)"
+        operator += f" Support {reclaim_level:.2f} ({reclaim_source}): {status_label}."
+    if px_vs_zone == "ABOVE" and zone_low is not None and zone_high is not None:
+        operator += f" Price {last_px:.2f} is above executable entry zone {zone_low:.2f}–{zone_high:.2f} — do not chase."
+    elif px_vs_zone == "BELOW" and zone_low is not None and zone_high is not None:
+        operator += f" Price {last_px:.2f} is below executable entry zone {zone_low:.2f}–{zone_high:.2f}."
     if overnight_binding:
         operator += " Overnight dossier flags still binding for execution."
     elif hostile_overnight:
@@ -467,10 +517,20 @@ def build_shadow_intraday_session_picture(
         "vs_overnight_dossier": {
             "overnight_hostile": hostile_overnight,
             "reclaim_level": reclaim_level,
+            "reclaim_level_source": reclaim_source,
+            "dossier_legacy_reclaim": dossier_legacy_reclaim,
             "reclaim_status": reclaim,
             "overhead_level": overhead,
             "overnight_flags_still_binding": overnight_binding,
             "dominant_tension": tension,
+        },
+        "executable_geometry": {
+            "entry_zone_low": zone_low,
+            "entry_zone_high": zone_high,
+            "invalidation_level": inv_level,
+            "last_price": last_px,
+            "price_vs_entry_zone": px_vs_zone,
+            "chase_risk": px_vs_zone == "ABOVE",
         },
         "operator_line": operator,
     }

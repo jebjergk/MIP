@@ -100,6 +100,9 @@ export default function StlEventRail({ events, onSelectSetup, selectedSetupId, g
                 {etype.replace(/_/g, ' ')}
               </span>
               <span className="stl-rail-desc">{get(e, 'EVENT_DESCRIPTION')}</span>
+              {get(e, 'PROPOSAL_ID') ? (
+                <span className="stl-rail-family">#{get(e, 'PROPOSAL_ID')}</span>
+              ) : null}
               {get(e, 'SETUP_FAMILY') && (
                 <span className="stl-rail-family">{get(e, 'SETUP_FAMILY').replace(/_/g, ' ')}</span>
               )}

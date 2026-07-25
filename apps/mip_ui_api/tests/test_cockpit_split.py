@@ -171,6 +171,92 @@ class TestStalenessGateBlocksAgenticSearch(unittest.TestCase):
         mock_complete.assert_called_once()
         self.assertEqual(mock_complete.call_args[0][1], "FAILED")
 
+    @patch("app.routers.management._import_proposals_to_active_lpa_portfolios")
+    @patch("app.routers.management._cockpit_run_complete")
+    @patch("app.routers.management._cockpit_run_start")
+    @patch("app.routers.management.fetch_all")
+    @patch("app.routers.management.get_connection")
+    @patch("app.routers.management.mip_workspace_root")
+    @patch("app.routers.management.resolve_subprocess_python")
+    @patch("subprocess.run")
+    def test_board_subprocess_failure_recovers_when_proposals_published(
+        self, mock_subproc, mock_py, mock_root, mock_conn, mock_fetch, mock_start, mock_complete, mock_import
+    ):
+        """Subprocess exit != 0 must still import when CHAIR_DONE heal finds published rows."""
+        mock_root.return_value = Path("/fake/root")
+        mock_py.return_value = Path("/fake/python")
+        mock_conn.return_value.cursor.return_value = MagicMock()
+        mock_conn.return_value.close = MagicMock()
+        mock_conn.return_value.commit = MagicMock()
+        mock_fetch.return_value = [_staleness_row(pipeline_lag=0, bar_lag=0)]
+        mock_subproc.return_value = _make_proc(returncode=1, stdout='{"status":"FAILED"}')
+        mock_import.return_value = {
+            "healed_chair_done_runs": 1,
+            "active_portfolios": [1, 2],
+            "per_portfolio_results": {"1": {"imported_count": 1}, "2": {"imported_count": 1}},
+            "total_imported": 2,
+            "skip_summary": {"imported_count": 2},
+        }
+
+        result = management.run_proposal_board(
+            portfolio=1,
+            max_proposals=8,
+            max_rounds=1,
+            max_candidates=5,
+            inter_concurrency=2,
+            market_types="STOCK",
+            import_proposals_to_lpa=True,
+            staleness_max_trading_days_lag=1,
+        )
+
+        self.assertEqual(result.get("status"), "PARTIAL_SUCCESS")
+        self.assertTrue(result.get("board_recovery"))
+        self.assertEqual(result.get("lpa_import_total_imported"), 2)
+        mock_import.assert_called_once()
+
+    @patch("app.routers.management._cockpit_run_complete")
+    @patch("app.routers.management._cockpit_run_start")
+    @patch("app.routers.management.fetch_all")
+    @patch("app.routers.management.get_connection")
+    @patch("app.routers.management.mip_workspace_root")
+    @patch("app.routers.management.resolve_subprocess_python")
+    @patch("subprocess.run")
+    def test_weekend_friday_data_passes_gate(
+        self, mock_subproc, mock_py, mock_root, mock_conn, mock_fetch, mock_start, mock_complete
+    ):
+        """Friday pipeline/bar with lag 0 vs last session must pass on Sat/Sun/Mon pre-open.
+
+        Staleness is measured against EXPECTED_DATE (last trading day), not calendar
+        today — otherwise Fri data reads as 2 calendar days stale on Sunday.
+        """
+        mock_root.return_value = Path("/fake/root")
+        mock_py.return_value = Path("/fake/python")
+        mock_conn.return_value.cursor.return_value = MagicMock()
+        mock_conn.return_value.close = MagicMock()
+        mock_fetch.return_value = [
+            {
+                "EXPECTED_DATE": "2026-07-17",
+                "PIPELINE_DATE": "2026-07-17",
+                "BAR_DATE": "2026-07-17",
+                "PIPELINE_LAG_DAYS": 0,
+                "BAR_LAG_DAYS": 0,
+            }
+        ]
+        mock_subproc.return_value = _make_proc(returncode=0, stdout=_board_success_payload())
+
+        result = management.run_proposal_board(
+            portfolio=1,
+            max_proposals=8,
+            max_rounds=1,
+            max_candidates=5,
+            inter_concurrency=2,
+            market_types="STOCK",
+            import_proposals_to_lpa=False,
+            staleness_max_trading_days_lag=1,
+        )
+
+        self.assertEqual(result.get("status"), "SUCCESS")
+
     @patch("app.routers.management._cockpit_run_complete")
     @patch("app.routers.management._cockpit_run_start")
     @patch("app.routers.management.fetch_all")

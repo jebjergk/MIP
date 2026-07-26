@@ -29,6 +29,7 @@ const NAV_GROUPS = [
   {
     label: 'Research',
     items: [
+      { to: '/price-action-analyser', icon: '\uD83D\uDD0E', label: 'Price Action Analyser' },
       { to: '/structural-timeline', icon: '\uD83C\uDFD7\uFE0F', label: 'Structural Timeline' },
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Legacy Market Timeline' },
       { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest, management, market_pulse, parallel_worlds, ask, decisions, intraday, news, learning_ledger, performance_dashboard, symbol_tracker, live_intelligence, reference, tape_observer, structural_training, structural_timeline, committee, committee_performance, position_health, cockpit, agentic_authority_router
+from app.price_action import router as price_action_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -51,6 +52,7 @@ app.include_router(committee_performance.router)
 app.include_router(position_health.router)
 app.include_router(cockpit.router)
 app.include_router(agentic_authority_router.router)
+app.include_router(price_action_router)
 
 
 @app.get("/")

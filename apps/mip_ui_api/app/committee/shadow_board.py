@@ -32,6 +32,10 @@ from app.config import get_snowflake_config
 from app.db import fetch_all, get_connection
 
 from .shadow_intraday_session import build_shadow_intraday_session_picture
+from .lpa_price_action_rag import (
+    get_literature_support,
+    update_methodologist_effect,
+)
 from .shadow_trade_geometry import normalize_chair_ruling_for_geometry
 from .shadow_types import (
     ChallengeTurn,
@@ -684,6 +688,15 @@ def _specialist_user_message(
             f"verdict_bucket={intra.get('verdict_bucket')}; "
             f"overnight_flags_still_binding={vs.get('overnight_flags_still_binding')}"
         )
+    literature = (pack_slices or {}).get("literature_support") or {}
+    lines.extend([
+        "",
+        "Price Action & Trading Methodologist notes are advisory context only.",
+        "Use literature_support only if relevant to your role; do not repeat it mechanically.",
+        "Observed MIP evidence remains the source of truth. Do not quote or name book authors.",
+        "Evaluate the LONG opportunity only and never suggest taking a short trade.",
+        f"literature_support.status={literature.get('status') or 'DISABLED'}",
+    ])
     return "\n".join(lines)
 
 
@@ -692,6 +705,9 @@ _SPECIALIST_OBJECTLESS_SYSTEM = (
     "Evidence is pre-loaded in the user message — do not request more data. "
     "Return ONLY a JSON object with keys: role, stance, confidence, rationale, evidence_used. "
     "stance must be one of: APPROVE, APPROVE_REDUCED, WAIT_RECLAIM, DEFER, DENY. "
+    "Use Price Action & Trading Methodologist notes only when relevant to your role; "
+    "do not repeat them mechanically. Observed MIP evidence remains the source of truth. "
+    "Do not name book authors or suggest a short trade; evaluate the LONG only. "
     "confidence is a float 0.0-1.0. No markdown fences. No prose outside JSON."
 )
 
@@ -997,6 +1013,7 @@ def _chair_context_message(
     positions: Dict[str, Any],
     revisions: List[RevisionTurn],
     conflicts: List[ConflictEntry],
+    pack_slices: Optional[Dict[str, Any]] = None,
 ) -> str:
     lines = [f"Hearing ID: {hearing_id}", "", "SPECIALIST POSITIONS (final after any revisions):"]
     for role, pos in positions.items():
@@ -1018,6 +1035,20 @@ def _chair_context_message(
 
     lines.extend([
         "",
+        "Price Action & Trading Methodologist notes are advisory context, not a signal.",
+        "Use literature_support only when relevant; do not repeat it mechanically.",
+        "Observed MIP evidence remains the source of truth. Do not quote or name book authors.",
+        "Evaluate this LONG opportunity only. Never recommend taking a short trade.",
+        "If bearish evidence dominates, use WAIT_RECLAIM, DEFER, or DENY for the long.",
+        "Remain capable of APPROVE when clean and APPROVE_REDUCED when valid but imperfect.",
+        "Do not reject merely because a setup is imperfect; distinguish valid now, reduced, early,",
+        "waiting for reclaim/pullback, mixed, and materially broken.",
+        (
+            "If intraday_15m_status is NOT_SUPPORTIVE_FALLBACK_TO_PRIOR, treat it as missing "
+            "long confirmation, not neutral evidence."
+        ),
+        f"literature_support.status={((pack_slices or {}).get('literature_support') or {}).get('status') or 'DISABLED'}",
+        "",
         "Now call get_evidence_slice with role_name=SHADOW_CHAIR to retrieve evidence slices as needed.",
         "Then issue your shadow ruling as the JSON object specified in your instructions.",
     ])
@@ -1033,12 +1064,15 @@ async def _run_chair(
     user: str,
     pk_path: str,
     timeout: float,
+    pack_slices: Optional[Dict[str, Any]] = None,
 ) -> Tuple[ShadowChairRuling, int, Dict[str, Any]]:
     t0 = time.monotonic()
     raw_response: Dict[str, Any] = {}
     try:
         logger.info("shadow_stage5: chair agent starting")
-        context_msg = _chair_context_message(hearing_id, positions, revisions, conflicts)
+        context_msg = _chair_context_message(
+            hearing_id, positions, revisions, conflicts, pack_slices,
+        )
         messages = [{"role": "user", "content": context_msg}]
         resp = await run_agent_object(
             account=account,
@@ -1358,13 +1392,13 @@ def _insert_chair_row_sync(
                  SHADOW_STANCE, SHADOW_CONFIDENCE,
                  PLURALITY_BASIS, CONFLICT_RESOLUTION,
                  SHADOW_TRADE_JSON, TOP_SUPPORTS, TOP_TENSIONS,
-                 RAW_RESPONSE,
+                 METHODOLOGIST_EFFECT, RAW_RESPONSE,
                  PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
             SELECT
                 %s, %s,
                 %s, %s,
                 %s, %s,
-                PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
                 PARSE_JSON(%s),
                 %s, %s, %s, %s
             """,
@@ -1376,6 +1410,7 @@ def _insert_chair_row_sync(
                 _jdump(trade_json),
                 _jdump(ch.top_supports),
                 _jdump(ch.top_tensions),
+                _jdump(ch.methodologist_effect.model_dump()),
                 raw_json,
                 ch.parse_ok, ch.degraded,
                 (ch.degraded_reason or "")[:500],
@@ -1873,13 +1908,13 @@ def _persist_shadow_session(
                      SHADOW_STANCE, SHADOW_CONFIDENCE,
                      PLURALITY_BASIS, CONFLICT_RESOLUTION,
                      SHADOW_TRADE_JSON, TOP_SUPPORTS, TOP_TENSIONS,
-                     RAW_RESPONSE,
+                     METHODOLOGIST_EFFECT, RAW_RESPONSE,
                      PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
                 SELECT
                     %s, %s,
                     %s, %s,
                     %s, %s,
-                    PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                    PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
                     PARSE_JSON(%s),
                     %s, %s, %s, %s
                 """,
@@ -1891,6 +1926,7 @@ def _persist_shadow_session(
                     _jdump(trade_json),
                     _jdump(ch.top_supports),
                     _jdump(ch.top_tensions),
+                    _jdump(ch.methodologist_effect.model_dump()),
                     "{}",
                     ch.parse_ok, ch.degraded,
                     (ch.degraded_reason or "")[:500],
@@ -1988,6 +2024,21 @@ async def orchestrate_shadow_board(
             phase4_dossier=phase4_dossier,
             intraday_session_picture=intraday_picture,
         )
+        # Stage 0.6: one optional, bounded literature retrieval for this
+        # shadow session. The helper is fail-open and replays the frozen compact
+        # slice from its audit row; specialists never retrieve independently.
+        literature_support = await asyncio.to_thread(
+            get_literature_support,
+            session_id=session_id,
+            hearing_id=hearing_id,
+            proposal_id=result.proposal_id,
+            symbol=symbol,
+            side=side,
+            pack_slices=pack.slices,
+            action_id=action_id,
+            evidence_pack_hash=evidence_pack_hash,
+        )
+        pack.slices["literature_support"] = literature_support
         await asyncio.to_thread(_stage_evidence_pack, pack, session_id)
         result.stage_reached = 0
         await _safe_checkpoint("stage0_progress", _checkpoint_session_progress_sync, session_id, 0, "RUNNING")
@@ -2157,12 +2208,17 @@ async def orchestrate_shadow_board(
             user=user,
             pk_path=pk_path,
             timeout=timeout_sec,
+            pack_slices=pack.slices,
         )
         chair_ruling = normalize_chair_ruling_for_geometry(
             chair_ruling,
             pack.slices if pack else None,
             intraday_picture,
         )
+        if literature_support.get("status") != "USED":
+            chair_ruling.methodologist_effect.used = False
+            chair_ruling.methodologist_effect.effect = "NO_MATERIAL_EFFECT"
+            chair_ruling.methodologist_effect.summary = ""
         result.chair = chair_ruling
         result.shadow_stance = chair_ruling.shadow_stance
         result.shadow_confidence = chair_ruling.shadow_confidence
@@ -2171,6 +2227,15 @@ async def orchestrate_shadow_board(
             "stage5_chair",
             _insert_chair_row_sync,
             session_id, hearing_id, chair_ruling, chair_elapsed, chair_raw,
+        )
+        await _safe_checkpoint(
+            "stage5_methodologist_effect",
+            update_methodologist_effect,
+            session_id,
+            literature_support,
+            chair_ruling.methodologist_effect.model_dump(),
+            chair_ruling.shadow_stance,
+            chair_ruling.shadow_confidence,
         )
         await _safe_checkpoint("stage5_progress", _checkpoint_session_progress_sync, session_id, 5, "RUNNING")
 
@@ -2553,6 +2618,20 @@ def fetch_shadow_session(
             (sid,),
         )
         chair_rows = fetch_all(cur)
+        try:
+            cur.execute(
+                "SELECT LITERATURE_SUPPORT_JSON "
+                "FROM MIP.KNOWLEDGE.LPA_PRICE_ACTION_RAG_AUDIT "
+                "WHERE SHADOW_SESSION_ID = %s LIMIT 1",
+                (sid,),
+            )
+            literature_rows = fetch_all(cur)
+        except Exception as exc:
+            logger.warning(
+                "shadow_fetch: literature support read failed session=%s: %s",
+                sid, exc,
+            )
+            literature_rows = []
 
         def _v(row: Dict[str, Any], k: str) -> Any:
             v = row.get(k)
@@ -2575,6 +2654,11 @@ def fetch_shadow_session(
                 "shadow_trade": _v(chair_rows[0], "SHADOW_TRADE_JSON"),
                 "top_supports": _v(chair_rows[0], "TOP_SUPPORTS"),
                 "top_tensions": _v(chair_rows[0], "TOP_TENSIONS"),
+                "methodologist_effect": _v(chair_rows[0], "METHODOLOGIST_EFFECT") or {
+                    "used": False,
+                    "effect": "NO_MATERIAL_EFFECT",
+                    "summary": "",
+                },
                 "parse_ok": chair_rows[0].get("PARSE_OK"),
                 "degraded": chair_rows[0].get("DEGRADED"),
             }
@@ -2593,12 +2677,17 @@ def fetch_shadow_session(
         shadow_stance_out = session.get("SHADOW_STANCE") if not is_running else None
         shadow_confidence_out = session.get("SHADOW_CONFIDENCE") if not is_running else None
         intraday_picture = _fetch_intraday_session_picture_sync(cur, hearing_id, sid)
+        literature_support = (
+            _v(literature_rows[0], "LITERATURE_SUPPORT_JSON")
+            if literature_rows else {"enabled": False, "status": "DISABLED"}
+        )
 
         return {
             "ok": True,
             "session_id": sid,
             "hearing_id": hearing_id,
             "intraday_session_picture": intraday_picture,
+            "literature_support": literature_support,
             "proposal_id": session.get("PROPOSAL_ID"),
             "snapshot_id": session.get("SNAPSHOT_ID"),
             "evidence_pack_hash": session.get("EVIDENCE_PACK_HASH"),

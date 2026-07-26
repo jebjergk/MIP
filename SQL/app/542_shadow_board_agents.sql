@@ -3,7 +3,7 @@
    Shadow Board — GET_SHADOW_EVIDENCE_SLICE stored procedure
    + CREATE AGENT objects for 6 specialists and 1 chair.
 
-   Pack version 2.1.0 — adds intraday_session_picture (RTH substantiation slice).
+   Pack version 2.1.0 — adds intraday and advisory literature support slices.
 
    Deployment order:
      1. GET_SHADOW_EVIDENCE_SLICE (tool backing for all agents)
@@ -33,7 +33,7 @@ USE SCHEMA APP;
      path_metrics, mfe_mae, invalidation, trust_label,
      deltas_summary, artifacts_summary,
      phase4_thesis_verdict, phase4_dossier_context,
-     intraday_session_picture
+     intraday_session_picture, literature_support
 
    Role-to-slice access map (closed world):
      STRUCTURAL_THESIS  -> proposal_meta, structural_state, thesis_summary,
@@ -82,35 +82,35 @@ _ALLOWED_SLICES = {
     'path_metrics', 'mfe_mae', 'invalidation', 'trust_label',
     'deltas_summary', 'artifacts_summary',
     'phase4_thesis_verdict', 'phase4_dossier_context',
-    'intraday_session_picture',
+    'intraday_session_picture', 'literature_support',
 }
 
 # Role-to-slice access map (mirrors shadow_types.py ROLE_SLICE_MAP)
 _ROLE_SLICE_MAP = {
     'STRUCTURAL_THESIS': {
         'proposal_meta', 'structural_state', 'thesis_summary',
-        'phase4_thesis_verdict', 'phase4_dossier_context',
+        'phase4_thesis_verdict', 'phase4_dossier_context', 'literature_support',
     },
     'ENTRY_GEOMETRY': {
         'proposal_meta', 'entry_zone', 'live_price',
-        'phase4_dossier_context', 'intraday_session_picture',
+        'phase4_dossier_context', 'intraday_session_picture', 'literature_support',
     },
     'REGIME': {
         'proposal_meta', 'regime_state', 'live_bars',
-        'phase4_dossier_context', 'intraday_session_picture',
+        'phase4_dossier_context', 'intraday_session_picture', 'literature_support',
     },
     'PATH_TRADEABILITY': {
         'proposal_meta', 'path_metrics', 'mfe_mae',
         'phase4_thesis_verdict', 'phase4_dossier_context',
-        'intraday_session_picture',
+        'intraday_session_picture', 'literature_support',
     },
     'PROTECTION_EXIT': {
         'proposal_meta', 'invalidation', 'live_price',
-        'phase4_thesis_verdict', 'phase4_dossier_context',
+        'phase4_thesis_verdict', 'phase4_dossier_context', 'literature_support',
     },
     'SYMBOL_BEHAVIOR': {
         'proposal_meta', 'trust_label', 'path_metrics', 'live_bars',
-        'phase4_dossier_context', 'intraday_session_picture',
+        'phase4_dossier_context', 'intraday_session_picture', 'literature_support',
     },
     'SHADOW_CHAIR': {
         'proposal_meta', 'structural_state', 'thesis_summary',
@@ -118,7 +118,7 @@ _ROLE_SLICE_MAP = {
         'path_metrics', 'mfe_mae', 'invalidation', 'trust_label',
         'deltas_summary', 'artifacts_summary',
         'phase4_thesis_verdict', 'phase4_dossier_context',
-        'intraday_session_picture',
+        'intraday_session_picture', 'literature_support',
     },
 }
 
@@ -256,7 +256,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_STRUCTURAL_THESIS_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, structural_state, thesis_summary,
-                  phase4_thesis_verdict, phase4_dossier_context.
+                  phase4_thesis_verdict, phase4_dossier_context, literature_support.
             required:
               - hearing_id
               - role_name
@@ -347,7 +347,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, entry_zone, live_price,
-                  phase4_dossier_context, intraday_session_picture.
+                  phase4_dossier_context, intraday_session_picture, literature_support.
             required:
               - hearing_id
               - role_name
@@ -432,7 +432,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, regime_state, live_bars,
-                  phase4_dossier_context, intraday_session_picture.
+                  phase4_dossier_context, intraday_session_picture, literature_support.
             required:
               - hearing_id
               - role_name
@@ -524,7 +524,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
                 description: >
                   One of: proposal_meta, path_metrics, mfe_mae,
                   phase4_thesis_verdict, phase4_dossier_context,
-                  intraday_session_picture.
+                  intraday_session_picture, literature_support.
             required:
               - hearing_id
               - role_name
@@ -613,7 +613,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PROTECTION_EXIT_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, invalidation, live_price,
-                  phase4_thesis_verdict, phase4_dossier_context.
+                  phase4_thesis_verdict, phase4_dossier_context, literature_support.
             required:
               - hearing_id
               - role_name
@@ -698,7 +698,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
                 type: string
                 description: >
                   One of: proposal_meta, trust_label, path_metrics, live_bars,
-                  phase4_dossier_context, intraday_session_picture.
+                  phase4_dossier_context, intraday_session_picture, literature_support.
             required:
               - hearing_id
               - role_name
@@ -740,7 +740,16 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
           path_metrics, mfe_mae, invalidation, trust_label,
           deltas_summary, artifacts_summary,
           phase4_thesis_verdict, phase4_dossier_context,
-          intraday_session_picture.
+          intraday_session_picture, literature_support.
+
+        LITERATURE SUPPORT:
+          Price Action & Trading Methodologist notes are advisory context only.
+          Use literature_support only if relevant to the role being synthesized;
+          do not repeat it mechanically. Observed MIP evidence remains the source
+          of truth. Do not quote or name book authors. Do not suggest a short trade.
+          The operator is evaluating a LONG opportunity only.
+          If literature_support.status is not USED, methodologist_effect must be
+          used=false, effect=NO_MATERIAL_EFFECT, summary="".
 
         Temporal authority (pack v2.1.0):
           phase4_dossier_context  — STRUCTURAL_PRIOR from proposal night. Context for
@@ -777,7 +786,15 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
            in which case break ties toward APPROVE_REDUCED/APPROVE).
         4. Note any CRITICAL conflicts (APPROVE vs DENY across specialists).
         5. Formulate the shadow trade construction: symbolic entry parameters based on evidence.
-        6. Output your ruling as JSON.
+        6. Classify methodologist_effect without inventing strong relevance.
+        7. Output your ruling as JSON.
+
+        The system must remain capable of approving pursuable long opportunities.
+        Do not reject merely because the setup is imperfect. Classify whether the
+        long is valid now, valid with reduced size, early, valid only after a
+        reclaim/pullback, mixed, or materially broken. When intraday_15m_status is
+        NOT_SUPPORTIVE_FALLBACK_TO_PRIOR, treat it as missing confirmation for the
+        long rather than neutral evidence. Do not encourage chasing a missed zone.
 
         STANCE OPTIONS for your ruling (same 5):
           APPROVE, APPROVE_REDUCED, WAIT_RECLAIM, DEFER, DENY
@@ -807,6 +824,11 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
           "conflict_resolution": "<how you resolved any MAJOR/CRITICAL conflicts>",
           "top_supports": ["<evidence point>", ...],
           "top_tensions": ["<concern>", ...],
+          "methodologist_effect": {
+            "used": <true|false>,
+            "effect": "<SUPPORTED_APPROVAL|SUPPORTED_REDUCED_APPROVAL|SUPPORTED_WAIT|SUPPORTED_REJECT|MIXED|NO_MATERIAL_EFFECT>",
+            "summary": "<small attribution summary using the Price Action & Trading Methodologist label, or empty>"
+          },
           "shadow_trade": {
             "entry_zone": "<description>",
             "size_posture": "<FULL|REDUCED|MINIMAL>",
@@ -833,7 +855,9 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
             phase4_dossier_context (STRUCTURAL_PRIOR levels/continuation context;
               phase4_available=false for pre-Phase-4 proposals),
             intraday_session_picture (RTH substantiation; verdict_bucket,
-              overnight_flags_still_binding, operator_line).
+              overnight_flags_still_binding, operator_line),
+            literature_support (compact approved LONG-only advisory notes; use only
+              when relevant and never treat as observed market evidence).
           input_schema:
             type: object
             properties:
@@ -846,7 +870,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
                 type: string
                 description: >
                   Any slice from the full catalog including phase4_thesis_verdict,
-                  phase4_dossier_context, and intraday_session_picture.
+                  phase4_dossier_context, intraday_session_picture, and literature_support.
             required:
               - hearing_id
               - role_name

@@ -33,27 +33,32 @@ ROLE_SLICE_MAP: Dict[str, set] = {
     "STRUCTURAL_THESIS": {
         "proposal_meta", "structural_state", "thesis_summary",
         "phase4_thesis_verdict", "phase4_dossier_context",
+        "literature_support",
     },
     "ENTRY_GEOMETRY": {
         "proposal_meta", "entry_zone", "live_price",
         "phase4_dossier_context", "intraday_session_picture",
+        "literature_support",
     },
     "REGIME": {
         "proposal_meta", "regime_state", "live_bars",
         "phase4_dossier_context", "intraday_session_picture",
+        "literature_support",
     },
     "PATH_TRADEABILITY": {
         "proposal_meta", "path_metrics", "mfe_mae",
         "phase4_thesis_verdict", "phase4_dossier_context",
-        "intraday_session_picture",
+        "intraday_session_picture", "literature_support",
     },
     "PROTECTION_EXIT": {
         "proposal_meta", "invalidation", "live_price",
         "phase4_thesis_verdict", "phase4_dossier_context",
+        "literature_support",
     },
     "SYMBOL_BEHAVIOR": {
         "proposal_meta", "trust_label", "path_metrics", "live_bars",
         "phase4_dossier_context", "intraday_session_picture",
+        "literature_support",
     },
     "SHADOW_CHAIR": {
         "proposal_meta", "structural_state", "thesis_summary",
@@ -61,7 +66,7 @@ ROLE_SLICE_MAP: Dict[str, set] = {
         "path_metrics", "mfe_mae", "invalidation", "trust_label",
         "deltas_summary", "artifacts_summary",
         "phase4_thesis_verdict", "phase4_dossier_context",
-        "intraday_session_picture",
+        "intraday_session_picture", "literature_support",
     },
 }
 
@@ -241,6 +246,26 @@ class ShadowTradeArtifact(BaseModel):
     exit_policy: str = ""
 
 
+class MethodologistEffect(BaseModel):
+    used: bool = False
+    effect: str = "NO_MATERIAL_EFFECT"
+    summary: str = ""
+
+    @model_validator(mode="after")
+    def _normalise(self) -> "MethodologistEffect":
+        allowed = {
+            "SUPPORTED_APPROVAL", "SUPPORTED_REDUCED_APPROVAL",
+            "SUPPORTED_WAIT", "SUPPORTED_REJECT", "MIXED",
+            "NO_MATERIAL_EFFECT",
+        }
+        self.effect = str(self.effect or "NO_MATERIAL_EFFECT").upper()
+        if self.effect not in allowed:
+            self.effect = "NO_MATERIAL_EFFECT"
+            self.used = False
+        self.summary = str(self.summary or "")[:1000]
+        return self
+
+
 class ShadowChairRuling(BaseModel):
     shadow_stance: str
     shadow_confidence: float = Field(ge=0.0, le=1.0)
@@ -249,6 +274,7 @@ class ShadowChairRuling(BaseModel):
     top_supports: List[str] = Field(default_factory=list)
     top_tensions: List[str] = Field(default_factory=list)
     shadow_trade: Optional[ShadowTradeArtifact] = None
+    methodologist_effect: MethodologistEffect = Field(default_factory=MethodologistEffect)
     parse_ok: bool = True
     degraded: bool = False
     degraded_reason: str = ""
@@ -311,6 +337,7 @@ def build_shadow_evidence_pack(
     phase4_thesis: Optional[Dict[str, Any]] = None,
     phase4_dossier: Optional[Dict[str, Any]] = None,
     intraday_session_picture: Optional[Dict[str, Any]] = None,
+    literature_support: Optional[Dict[str, Any]] = None,
 ) -> ShadowEvidencePack:
     """
     Build the ShadowEvidencePack from Committee 2.0 DB rows.
@@ -570,6 +597,10 @@ def build_shadow_evidence_pack(
         "reason": "NOT_COMPUTED",
         "operator_line": "Intraday session picture was not computed for this run.",
     }
+    slices["literature_support"] = literature_support or {
+        "enabled": False,
+        "status": "DISABLED",
+    }
 
     return ShadowEvidencePack(
         hearing_id=hid,
@@ -624,6 +655,7 @@ def parse_chair_ruling(raw_text: str) -> ShadowChairRuling:
         if stance not in ALLOWED_STANCES:
             stance = "DEFER"
         trade_data = data.get("shadow_trade") or {}
+        effect_data = data.get("methodologist_effect") or {}
         trade = ShadowTradeArtifact(
             entry_zone=str(trade_data.get("entry_zone") or ""),
             size_posture=str(trade_data.get("size_posture") or "REDUCED"),
@@ -641,6 +673,11 @@ def parse_chair_ruling(raw_text: str) -> ShadowChairRuling:
             top_supports=list(data.get("top_supports") or []),
             top_tensions=list(data.get("top_tensions") or []),
             shadow_trade=trade,
+            methodologist_effect=MethodologistEffect(
+                used=bool(effect_data.get("used", False)),
+                effect=str(effect_data.get("effect") or "NO_MATERIAL_EFFECT"),
+                summary=str(effect_data.get("summary") or ""),
+            ),
         )
     except Exception as exc:
         logger.warning("parse_chair_ruling failed: %s", exc)

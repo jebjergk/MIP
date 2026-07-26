@@ -33,6 +33,8 @@ function emptyNormalized(raw) {
     sessionId: null,
     hearingId: null,
     chair: null,
+    literatureSupport: { enabled: false, status: 'DISABLED' },
+    methodologistEffect: { used: false, effect: 'NO_MATERIAL_EFFECT', summary: '' },
     raw: raw ?? null,
   }
 }
@@ -61,6 +63,12 @@ export function normalizeShadowBoardResponse(json) {
   const isRunning = status === 'RUNNING'
 
   const chair = json.chair && typeof json.chair === 'object' ? json.chair : null
+  const literatureSupport = json.literature_support && typeof json.literature_support === 'object'
+    ? json.literature_support
+    : { enabled: false, status: 'DISABLED' }
+  const methodologistEffect = chair?.methodologist_effect
+    ?? literatureSupport?.methodologist_effect
+    ?? { used: false, effect: 'NO_MATERIAL_EFFECT', summary: '' }
 
   const stanceRaw = isRunning
     ? (json.shadow_stance ?? null)
@@ -93,6 +101,8 @@ export function normalizeShadowBoardResponse(json) {
     sessionId: json.session_id ?? null,
     hearingId: json.hearing_id ?? null,
     chair: isRunning ? null : chair,
+    literatureSupport,
+    methodologistEffect,
     raw: json,
   }
 }

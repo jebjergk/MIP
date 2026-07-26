@@ -677,6 +677,53 @@ function OutcomeSummary({ chair, shadowStance, shadowConfidence }) {
   )
 }
 
+function safeMethodologistText(value) {
+  return String(value || '')
+    .replace(/al\s+brooks/gi, '')
+    .replace(/source\s*:.*$/gis, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function MethodologistTrace({ support, effect }) {
+  const status = String(support?.status || 'DISABLED').toUpperCase()
+  const cards = Array.isArray(support?.cards) ? support.cards.slice(0, 3) : []
+  const statusLabel = status === 'USED'
+    ? `Used ${cards.length} approved long-side note${cards.length === 1 ? '' : 's'}`
+    : status === 'UNAVAILABLE'
+      ? 'Unavailable — committee continued without literature support'
+      : status === 'NO_RELEVANT_LONG_CARDS'
+        ? 'No relevant approved long-side notes'
+        : status === 'SKIPPED_SIDE_NOT_LONG'
+          ? 'Not used for this side'
+          : 'Not used'
+  const effectSummary = safeMethodologistText(effect?.summary)
+  if (status === 'DISABLED' && !effectSummary) return null
+  return (
+    <section className="sbp-methodologist" aria-label="Price Action and Trading Methodologist">
+      <div className="sbp-methodologist-head">
+        <span className="sbp-section-label">Price Action &amp; Trading Methodologist</span>
+        <span className="sbp-methodologist-status">{statusLabel}</span>
+      </div>
+      {cards.length > 0 ? (
+        <ul className="sbp-methodologist-list">
+          {cards.map((card) => {
+            const text = safeMethodologistText(
+              card?.methodologist_view || card?.relevance_reason || card?.snippet,
+            ).slice(0, 240)
+            return text ? <li key={card?.card_id || text}>{text}</li> : null
+          })}
+        </ul>
+      ) : null}
+      {effectSummary ? (
+        <p className="sbp-methodologist-effect">
+          Effect on verdict: {effectSummary}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot footer (kept from legacy)
 // ---------------------------------------------------------------------------
@@ -834,6 +881,12 @@ export default function ShadowBoardPanel({
   const intradayPicture = shadowPayload?.intraday_session_picture
     ?? runningProgress?.intraday_session_picture
     ?? null
+  const literatureSupport = shadowPayload?.literature_support
+    ?? runningProgress?.literature_support
+    ?? null
+  const methodologistEffect = chair?.methodologist_effect
+    ?? literatureSupport?.methodologist_effect
+    ?? null
   const startedAtMs = runningProgress?.started_at_ms || null
   const liveElapsed = useElapsedSeconds(isRunning, startedAtMs)
   const [showLiveDeliberation, setShowLiveDeliberation] = useState(false)
@@ -920,6 +973,7 @@ export default function ShadowBoardPanel({
       </div>
 
       <IntradaySessionPictureCard picture={intradayPicture} />
+      <MethodologistTrace support={literatureSupport} effect={methodologistEffect} />
 
       {/* Final verdict ribbon — only after the session has sealed */}
       {isTerminal && shadowPayload?.shadow_stance && (

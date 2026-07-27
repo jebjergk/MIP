@@ -102,10 +102,10 @@ def main() -> int:
                         help="Max specialists per dossier in parallel.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Run all stages but skip STRUCTURAL_TRADE_PROPOSALS insert.")
-    parser.add_argument("--max-candidates", type=int, default=35,
+    parser.add_argument("--max-candidates", type=int, default=30,
                         help=(
                             "Cap on top-scoring symbols sent to AI_COMPLETE after "
-                            "structural pre-screen (default 35)."
+                            "pre-screen (default 30 with PAA path)."
                         ))
     parser.add_argument("--daily-call-budget", type=int, default=222,
                         help=(
@@ -119,6 +119,21 @@ def main() -> int:
                             "Not implied by --symbols or any other flag. "
                             "Also required for uncapped mode (no --max-candidates)."
                         ))
+    parser.add_argument(
+        "--paa-prescreen",
+        dest="paa_prescreen",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Force PAA pre-screen on for this run (overrides APP_CONFIG).",
+    )
+    parser.add_argument(
+        "--no-paa-prescreen",
+        dest="paa_prescreen",
+        action="store_const",
+        const=False,
+        help="Force legacy score-ranked pre-screen for this run.",
+    )
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
@@ -159,6 +174,7 @@ def main() -> int:
             max_candidates=args.max_candidates,
             daily_call_budget=args.daily_call_budget,
             allow_budget_override=args.allow_budget_override,
+            paa_prescreen=args.paa_prescreen,
         )
     )
 
@@ -178,6 +194,7 @@ def main() -> int:
         "eligibility_skipped_count": result.eligibility_skipped_count,
         "eligibility_skip_breakdown": result.eligibility_skip_breakdown,
         "candidate_mode": result.candidate_mode,
+        "paa_prescreen_summary": result.paa_prescreen_summary,
         "estimated_agent_sessions": result.estimated_agent_sessions,
         "chair_propose_count": result.chair_propose_count,
         "props_executable_count": result.props_executable_count,
@@ -248,6 +265,29 @@ def main() -> int:
     ]
     if result.error:
         _summary_lines.append(f"  ERROR                   : {result.error[:120]}")
+    if result.paa_prescreen_summary:
+        _paa = result.paa_prescreen_summary
+        _summary_lines += [
+            "-" * 72,
+            "  PAA PRE-SCREEN",
+            f"  Scanned                 : {_paa.get('scanned', 0)}",
+            f"  Selected for panel      : {_paa.get('selected', 0)}",
+            f"  Primary / secondary / geo: "
+            f"{_paa.get('primary_count', 0)} / "
+            f"{_paa.get('secondary_count', 0)} / "
+            f"{_paa.get('geometry_fill_count', 0)}",
+            f"  Scan errors             : {_paa.get('scan_errors', 0)}",
+            f"  Est. PAA LLM calls      : {_paa.get('estimated_llm_calls', 0)}",
+            f"  Est. PAA USD            : ${_paa.get('estimated_usd', 0):.4f}",
+            f"  Newly included          : {_paa.get('newly_included', [])}",
+            f"  Displaced from old      : {_paa.get('displaced', [])}",
+        ]
+        _blocked = _paa.get("downstream_blocked") or []
+        if _blocked:
+            _summary_lines.append(
+                f"  Downstream blocked      : "
+                f"{[b.get('symbol') for b in _blocked]}"
+            )
     _summary_lines.append("=" * 72)
     _summary_lines.append("")
 

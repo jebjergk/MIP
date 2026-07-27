@@ -386,13 +386,12 @@ def run_ib_manual_daily_job(
     proposal_board_max_proposals: int = Query(8, ge=1, le=20),
     proposal_board_max_rounds: int = Query(1, ge=1, le=3),
     proposal_board_max_candidates: int = Query(
-        35,
+        30,
         ge=1,
         le=50,
         description=(
-            "Pre-screen cap: top-N STOCK candidates by structural appeal score "
-            "sent to the AI_COMPLETE panel (~6 LLM calls each). Default 35 "
-            "(~1.9 Snowflake credits/run at current rates)."
+            "Pre-screen cap: top-N STOCK candidates sent to the AI_COMPLETE panel "
+            "(default 30 with PAA pre-screen)."
         ),
     ),
     proposal_board_inter_concurrency: int = Query(
@@ -813,12 +812,12 @@ def run_proposal_board(
     max_proposals: int = Query(8, ge=1, le=20),
     max_rounds: int = Query(1, ge=1, le=3),
     max_candidates: int = Query(
-        35,
+        30,
         ge=1,
         le=50,
         description=(
-            "Pre-screen cap: top-N candidates by structural appeal score "
-            "sent to AI_COMPLETE (~6 calls each). Default 35."
+            "Pre-screen cap: top-N candidates sent to AI_COMPLETE (~6 calls each). "
+            "Default 30 with PAA pre-screen."
         ),
     ),
     inter_concurrency: int = Query(2, ge=1, le=8, description="Parallel dossiers sent to agents."),

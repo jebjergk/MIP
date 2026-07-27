@@ -65,6 +65,20 @@ from .prompts import (
 )
 from .review_eligibility import EligibilityDecision, evaluate_dossier_eligibility
 from .ranking import rank_eligible_rows, score_candidate
+from .paa_prescreen import (
+    AuditVerificationError,
+    PaaPrescreenConfigError,
+    PaaPrescreenSummary,
+    build_paa_audit_fields,
+    collect_downstream_blocks,
+    compare_old_vs_paa,
+    preflight_scan_budget,
+    rank_candidates,
+    read_paa_prescreen_config,
+    scan_universe,
+    validate_analyser_runtime,
+    write_prescreen_artifact,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3152,6 +3166,7 @@ class BoardRunResult:
     pre_board_stock_only_gate: str = "NOT_RUN"
     pre_board_market_type_integrity_gate: str = "NOT_RUN"
     pre_board_gate_checks: Dict[str, int] = field(default_factory=dict)
+    paa_prescreen_summary: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
@@ -3308,6 +3323,7 @@ async def orchestrate_phase4_board(
     max_candidates: Optional[int] = _DEFAULT_MAX_CANDIDATES,
     daily_call_budget: int = _DEFAULT_DAILY_CALL_BUDGET,
     allow_budget_override: bool = False,
+    paa_prescreen: Optional[bool] = None,
 ) -> BoardRunResult:
     """
     Run the full Phase 4 Cortex Agentic Proposal Board.
@@ -3538,86 +3554,410 @@ async def orchestrate_phase4_board(
         skip_counts, operator_override,
     )
 
-    # Stage 0.6 — SCORE_RANKED pre-screen + max_candidates cap.
-    # Deterministic appeal scoring (ranking.py) then top-N to AI_COMPLETE panel.
+    # Stage 0.6 — pre-screen + max_candidates cap.
+    # PAA path (feature-flagged): Price Action Analyser rank + top-N.
+    # Legacy path: deterministic appeal scoring (ranking.py).
     genuine_eligible_count = len(eligible_rows)
     cost_capped_count = 0
+    paa_summary_dict: Optional[Dict[str, Any]] = None
+    paa_selected_symbols: List[str] = []
 
-    scored_rows = rank_eligible_rows(eligible_rows, as_of)
-    candidate_mode = "SCORE_RANKED" if scored_rows else "UNCAPPED"
-    if scored_rows:
-        top_preview = [
-            (
-                f"{sym}(rank={breakdown.get('combined_rank_score', pts):.0f}"
-                f"/exec={breakdown.get('execution_readiness_score', 0):.0f})"
-            )
-            for _did, sym, _mkt, _pl, pts, breakdown in scored_rows[:10]
-        ]
-        logger.info(
-            "phase4 prescreen_score run=%s eligible=%d top10=%s",
-            run_id, len(scored_rows), top_preview,
-        )
+    stock_rows = [
+        (did, sym, mkt, payload)
+        for did, sym, mkt, payload in rows
+        if (mkt or "").upper() == "STOCK"
+    ]
+    stock_by_symbol = {sym.upper(): (did, sym, mkt, payload) for did, sym, mkt, payload in stock_rows}
 
-    prescreen_cur = conn.cursor()
+    paa_cfg_cur = conn.cursor()
     try:
-        for rank_idx, (_did, sym, _mkt, _payload, _pts, breakdown) in enumerate(scored_rows, 1):
-            try:
-                _patch_eligibility_prescreen(
-                    prescreen_cur, run_id, sym, breakdown,
-                    prescreen_rank=rank_idx,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "phase4 prescreen patch failed run=%s symbol=%s: %s",
-                    run_id, sym, e,
-                )
-        conn.commit()
+        paa_config = read_paa_prescreen_config(paa_cfg_cur)
     finally:
         try:
-            prescreen_cur.close()
+            paa_cfg_cur.close()
         except Exception:  # noqa: BLE001
             pass
 
-    eligible_rows = [
-        (did, sym, mkt, payload) for did, sym, mkt, payload, _pts, _bd in scored_rows
-    ]
+    use_paa = paa_prescreen if paa_prescreen is not None else paa_config.enabled
 
-    if max_candidates is not None and len(eligible_rows) > max_candidates:
-        kept = eligible_rows[:max_candidates]
-        skipped_cap = eligible_rows[max_candidates:]
-        cost_capped_count = len(skipped_cap)
-        candidate_mode = "SCORE_RANKED"
+    # Shadow old score-ranked pre-screen for audit / comparison (always computed).
+    scored_rows = rank_eligible_rows(eligible_rows, as_of)
+    old_rank_by_symbol: Dict[str, int] = {}
+    old_breakdown_by_symbol: Dict[str, Dict[str, Any]] = {}
+    for rank_idx, (_did, sym, _mkt, _payload, _pts, breakdown) in enumerate(scored_rows, 1):
+        old_rank_by_symbol[sym.upper()] = rank_idx
+        old_breakdown_by_symbol[sym.upper()] = dict(breakdown or {})
 
-        logger.info(
-            "phase4 SCORE_RANKED cap run=%s max_candidates=%d "
-            "kept=%s skipped=%d",
-            run_id, max_candidates,
-            [sym for _, sym, _, _ in kept],
-            cost_capped_count,
-        )
-
-        cap_elig_cur = conn.cursor()
+    if use_paa:
+        candidate_mode = "PAA_RANKED"
         try:
-            cap_rank_start = max_candidates + 1
-            for cap_offset, (did, sym, mkt, _payload) in enumerate(skipped_cap):
-                skip_counts["NOT_SENT_TO_AGENT_PANEL_COST_CAP"] = (
-                    skip_counts.get("NOT_SENT_TO_AGENT_PANEL_COST_CAP", 0) + 1
+            analyser_config = read_runtime_config()
+            validate_analyser_runtime(analyser_config)
+            preflight_scan_budget(
+                symbol_count=len(stock_rows),
+                config=paa_config,
+                analyser_config=analyser_config,
+                allow_override=allow_budget_override,
+            )
+        except PaaPrescreenConfigError as exc:
+            err_msg = f"phase4 PAA_PRESCREEN_CONFIG_FAILED: {exc}"
+            logger.error(err_msg)
+            try:
+                err_cur = conn.cursor()
+                err_cur.execute(
+                    """
+                    UPDATE MIP.APP.PROPOSAL_BOARD_RUN
+                       SET RUN_STATUS = 'FAILED',
+                           FINISHED_AT = CURRENT_TIMESTAMP(),
+                           ERROR_JSON = OBJECT_CONSTRUCT(
+                               'reason_code', 'PAA_PRESCREEN_CONFIG_FAILED',
+                               'message', %(msg)s
+                           )
+                     WHERE RUN_ID = %(run_id)s
+                    """,
+                    {"run_id": run_id, "msg": err_msg[:2000]},
                 )
-                cap_bd = next(
-                    (bd for d, s, _m, _p, _pt, bd in scored_rows if d == did and s == sym),
-                    {},
+                conn.commit()
+                err_cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                conn.close()
+            return BoardRunResult(
+                run_id=run_id, status="FAILED", as_of_date=as_of,
+                dossier_count=len(rows), valid_dossier_count=0,
+                invalid_dossier_count=0, published_count=0, skipped_count=0,
+                eligible_count=0,
+                genuine_eligible_count=genuine_eligible_count,
+                candidate_mode=candidate_mode,
+                error=err_msg,
+            )
+
+        try:
+            scans = scan_universe(
+                [sym for _, sym, _, _ in stock_rows],
+                lookback_bars=paa_config.lookback_bars,
+                config=analyser_config,
+            )
+            selection = rank_candidates(
+                scans,
+                top_n=paa_config.top_n,
+                llm_enabled=analyser_config.llm_enabled,
+            )
+        except AuditVerificationError as exc:
+            err_msg = f"phase4 PAA_AUDIT_WRITE_FAILED: {exc}"
+            logger.error(err_msg)
+            try:
+                err_cur = conn.cursor()
+                err_cur.execute(
+                    """
+                    UPDATE MIP.APP.PROPOSAL_BOARD_RUN
+                       SET RUN_STATUS = 'FAILED',
+                           FINISHED_AT = CURRENT_TIMESTAMP(),
+                           ERROR_JSON = OBJECT_CONSTRUCT(
+                               'reason_code', 'PAA_AUDIT_WRITE_FAILED',
+                               'message', %(msg)s
+                           )
+                     WHERE RUN_ID = %(run_id)s
+                    """,
+                    {"run_id": run_id, "msg": err_msg[:2000]},
                 )
+                conn.commit()
+                err_cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                conn.close()
+            return BoardRunResult(
+                run_id=run_id, status="FAILED", as_of_date=as_of,
+                dossier_count=len(rows), valid_dossier_count=0,
+                invalid_dossier_count=0, published_count=0, skipped_count=0,
+                eligible_count=0,
+                genuine_eligible_count=genuine_eligible_count,
+                candidate_mode=candidate_mode,
+                error=err_msg,
+            )
+
+        old_cap = max_candidates if max_candidates is not None else paa_config.top_n
+        old_panel_symbols = [
+            sym for _did, sym, _mkt, _payload, _pts, _bd in scored_rows[:old_cap]
+        ]
+        newly_included, displaced = compare_old_vs_paa(
+            old_panel_symbols, selection.selected_symbols,
+        )
+        paa_selected_symbols = list(selection.selected_symbols)
+
+        eligible_rows = [
+            stock_by_symbol[sym.upper()]
+            for sym in selection.selected_symbols
+            if sym.upper() in stock_by_symbol
+        ]
+
+        paa_by_symbol = {c.symbol.upper(): c for c in selection.ranked}
+        displaced_set = {s.upper() for s in displaced}
+        newly_set = {s.upper() for s in newly_included}
+
+        prescreen_cur = conn.cursor()
+        try:
+            panel_rank = 0
+            for candidate in selection.ranked:
+                if candidate.symbol.upper() not in stock_by_symbol:
+                    continue
+                sym_key = candidate.symbol.upper()
+                old_bd = dict(old_breakdown_by_symbol.get(sym_key, {}))
+                old_bd["prescreen_mode"] = "PAA"
+                old_bd["old_prescreen_rank"] = old_rank_by_symbol.get(sym_key)
+                old_bd["old_prescreen_eligible"] = sym_key in old_rank_by_symbol
+                old_bd["old_prescreen_score"] = old_bd.get("combined_rank_score")
+                old_bd.update(build_paa_audit_fields(candidate))
+                old_bd["newly_included_by_paa"] = sym_key in newly_set
+                old_bd["displaced_from_old_prescreen"] = sym_key in displaced_set
+                patch_kwargs: Dict[str, Any] = {}
+                if candidate.selected_for_panel:
+                    panel_rank += 1
+                    patch_kwargs = {
+                        "prescreen_rank": panel_rank,
+                        "eligible": True,
+                        "primary_reason_code": "PAA_SELECTED_FOR_PANEL",
+                        "notes": f"PAA pre-screen selected ({candidate.select_reason}).",
+                    }
+                else:
+                    patch_kwargs = {
+                        "prescreen_rank": candidate.paa_rank,
+                        "eligible": False,
+                        "primary_reason_code": "NOT_SELECTED_BY_PAA_PRESCREEN",
+                        "notes": "Ranked by PAA but outside top-N panel selection.",
+                    }
                 try:
                     _patch_eligibility_prescreen(
-                        cap_elig_cur, run_id, sym, cap_bd,
-                        prescreen_rank=cap_rank_start + cap_offset,
+                        prescreen_cur, run_id, candidate.symbol, old_bd, **patch_kwargs,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    err_msg = (
+                        f"phase4 PAA eligibility audit write failed run={run_id} "
+                        f"symbol={candidate.symbol}: {e}"
+                    )
+                    logger.error(err_msg)
+                    raise RuntimeError(err_msg) from e
+
+            # Stock symbols scanned but excluded from PAA rank list (errors / verdict).
+            ranked_keys = set(paa_by_symbol)
+            for sym_key, (did, sym, mkt, payload) in stock_by_symbol.items():
+                if sym_key in ranked_keys:
+                    continue
+                scan = scans.get(sym_key)
+                old_bd = dict(old_breakdown_by_symbol.get(sym_key, {}))
+                old_bd["prescreen_mode"] = "PAA"
+                old_bd["old_prescreen_rank"] = old_rank_by_symbol.get(sym_key)
+                old_bd["old_prescreen_eligible"] = sym_key in old_rank_by_symbol
+                old_bd["paa_selected_for_panel"] = False
+                if scan and scan.error:
+                    old_bd["paa_select_reason"] = "SCAN_ERROR"
+                    old_bd["paa_error"] = scan.error
+                    reason = "PAA_SCAN_ERROR"
+                else:
+                    old_bd["paa_select_reason"] = "NOT_ELIGIBLE_VERDICT"
+                    reason = "NOT_SELECTED_BY_PAA_PRESCREEN"
+                try:
+                    _patch_eligibility_prescreen(
+                        prescreen_cur, run_id, sym, old_bd,
+                        prescreen_rank=old_rank_by_symbol.get(sym_key) or 9999,
                         eligible=False,
-                        primary_reason_code="NOT_SENT_TO_AGENT_PANEL_COST_CAP",
-                        notes="Skipped by max_candidates cap after execution-readiness ranking.",
+                        primary_reason_code=reason,
+                        notes="Excluded by PAA pre-screen.",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    err_msg = (
+                        f"phase4 PAA eligibility audit write failed run={run_id} "
+                        f"symbol={sym}: {e}"
+                    )
+                    logger.error(err_msg)
+                    raise RuntimeError(err_msg) from e
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            err_msg = f"phase4 PAA_AUDIT_WRITE_FAILED: {exc}"
+            logger.error(err_msg)
+            try:
+                err_cur = conn.cursor()
+                err_cur.execute(
+                    """
+                    UPDATE MIP.APP.PROPOSAL_BOARD_RUN
+                       SET RUN_STATUS = 'FAILED',
+                           FINISHED_AT = CURRENT_TIMESTAMP(),
+                           ERROR_JSON = OBJECT_CONSTRUCT(
+                               'reason_code', 'PAA_AUDIT_WRITE_FAILED',
+                               'message', %(msg)s
+                           )
+                     WHERE RUN_ID = %(run_id)s
+                    """,
+                    {"run_id": run_id, "msg": err_msg[:2000]},
+                )
+                conn.commit()
+                err_cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                conn.close()
+            return BoardRunResult(
+                run_id=run_id, status="FAILED", as_of_date=as_of,
+                dossier_count=len(rows), valid_dossier_count=0,
+                invalid_dossier_count=0, published_count=0, skipped_count=0,
+                eligible_count=0,
+                genuine_eligible_count=genuine_eligible_count,
+                candidate_mode=candidate_mode,
+                error=err_msg,
+            )
+        finally:
+            try:
+                prescreen_cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        paa_summary = PaaPrescreenSummary(
+            enabled=True,
+            top_n=paa_config.top_n,
+            scanned=len(stock_rows),
+            selected=len(eligible_rows),
+            primary_count=selection.primary_count,
+            secondary_count=selection.secondary_count,
+            geometry_fill_count=selection.geometry_fill_count,
+            scan_errors=selection.scan_errors,
+            estimated_llm_calls=selection.estimated_llm_calls,
+            estimated_usd=selection.estimated_usd,
+            newly_included=newly_included,
+            displaced=displaced,
+        )
+        paa_summary_dict = {
+            "enabled": True,
+            "top_n": paa_config.top_n,
+            "scanned": paa_summary.scanned,
+            "selected": paa_summary.selected,
+            "primary_count": paa_summary.primary_count,
+            "secondary_count": paa_summary.secondary_count,
+            "geometry_fill_count": paa_summary.geometry_fill_count,
+            "scan_errors": paa_summary.scan_errors,
+            "estimated_llm_calls": paa_summary.estimated_llm_calls,
+            "estimated_usd": paa_summary.estimated_usd,
+            "newly_included": newly_included,
+            "displaced": displaced,
+        }
+        write_prescreen_artifact(
+            run_id=run_id, summary=paa_summary, ranked=selection.ranked,
+        )
+        logger.info(
+            "phase4 PAA prescreen run=%s scanned=%d selected=%d primary=%d "
+            "secondary=%d geometry_fill=%d errors=%d newly_included=%s displaced=%s",
+            run_id, paa_summary.scanned, paa_summary.selected,
+            paa_summary.primary_count, paa_summary.secondary_count,
+            paa_summary.geometry_fill_count, paa_summary.scan_errors,
+            newly_included, displaced,
+        )
+    else:
+        candidate_mode = "SCORE_RANKED" if scored_rows else "UNCAPPED"
+        if scored_rows:
+            top_preview = [
+                (
+                    f"{sym}(rank={breakdown.get('combined_rank_score', pts):.0f}"
+                    f"/exec={breakdown.get('execution_readiness_score', 0):.0f})"
+                )
+                for _did, sym, _mkt, _pl, pts, breakdown in scored_rows[:10]
+            ]
+            logger.info(
+                "phase4 prescreen_score run=%s eligible=%d top10=%s",
+                run_id, len(scored_rows), top_preview,
+            )
+
+        prescreen_cur = conn.cursor()
+        try:
+            for rank_idx, (_did, sym, _mkt, _payload, _pts, breakdown) in enumerate(scored_rows, 1):
+                try:
+                    _patch_eligibility_prescreen(
+                        prescreen_cur, run_id, sym, breakdown,
+                        prescreen_rank=rank_idx,
                     )
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
-                        "phase4 cost_cap patch failed run=%s symbol=%s: %s",
+                        "phase4 prescreen patch failed run=%s symbol=%s: %s",
+                        run_id, sym, e,
+                    )
+            conn.commit()
+        finally:
+            try:
+                prescreen_cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        eligible_rows = [
+            (did, sym, mkt, payload) for did, sym, mkt, payload, _pts, _bd in scored_rows
+        ]
+
+        if max_candidates is not None and len(eligible_rows) > max_candidates:
+            kept = eligible_rows[:max_candidates]
+            skipped_cap = eligible_rows[max_candidates:]
+            cost_capped_count = len(skipped_cap)
+            candidate_mode = "SCORE_RANKED"
+
+            logger.info(
+                "phase4 SCORE_RANKED cap run=%s max_candidates=%d "
+                "kept=%s skipped=%d",
+                run_id, max_candidates,
+                [sym for _, sym, _, _ in kept],
+                cost_capped_count,
+            )
+
+            cap_elig_cur = conn.cursor()
+            try:
+                cap_rank_start = max_candidates + 1
+                for cap_offset, (did, sym, mkt, _payload) in enumerate(skipped_cap):
+                    skip_counts["NOT_SENT_TO_AGENT_PANEL_COST_CAP"] = (
+                        skip_counts.get("NOT_SENT_TO_AGENT_PANEL_COST_CAP", 0) + 1
+                    )
+                    cap_bd = next(
+                        (bd for d, s, _m, _p, _pt, bd in scored_rows if d == did and s == sym),
+                        {},
+                    )
+                    try:
+                        _patch_eligibility_prescreen(
+                            cap_elig_cur, run_id, sym, cap_bd,
+                            prescreen_rank=cap_rank_start + cap_offset,
+                            eligible=False,
+                            primary_reason_code="NOT_SENT_TO_AGENT_PANEL_COST_CAP",
+                            notes="Skipped by max_candidates cap after execution-readiness ranking.",
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "phase4 cost_cap patch failed run=%s symbol=%s: %s",
+                            run_id, sym, e,
+                        )
+                conn.commit()
+            finally:
+                try:
+                    cap_elig_cur.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            eligible_rows = kept
+
+    if use_paa and max_candidates is not None and len(eligible_rows) > max_candidates:
+        kept = eligible_rows[:max_candidates]
+        skipped_cap = eligible_rows[max_candidates:]
+        cost_capped_count = len(skipped_cap)
+        cap_elig_cur = conn.cursor()
+        try:
+            for cap_offset, (_did, sym, _mkt, _payload) in enumerate(skipped_cap, 1):
+                skip_counts["NOT_SENT_TO_AGENT_PANEL_COST_CAP"] = (
+                    skip_counts.get("NOT_SENT_TO_AGENT_PANEL_COST_CAP", 0) + 1
+                )
+                try:
+                    _patch_eligibility_prescreen(
+                        cap_elig_cur, run_id, sym, {},
+                        prescreen_rank=paa_config.top_n + cap_offset,
+                        eligible=False,
+                        primary_reason_code="NOT_SENT_TO_AGENT_PANEL_COST_CAP",
+                        notes="Skipped by max_candidates clamp after PAA selection.",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "phase4 paa cost_cap patch failed run=%s symbol=%s: %s",
                         run_id, sym, e,
                     )
             conn.commit()
@@ -3939,6 +4279,22 @@ async def orchestrate_phase4_board(
         except Exception:  # noqa: BLE001
             pass
 
+        if paa_summary_dict is not None and paa_selected_symbols:
+            try:
+                downstream_blocked = collect_downstream_blocks(
+                    cur, run_id, paa_selected_symbols,
+                )
+                paa_summary_dict["downstream_blocked"] = downstream_blocked
+                if downstream_blocked:
+                    logger.info(
+                        "phase4 PAA downstream blocks run=%s count=%d symbols=%s",
+                        run_id,
+                        len(downstream_blocked),
+                        [b["symbol"] for b in downstream_blocked],
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("phase4 PAA downstream block report failed run=%s", run_id)
+
         return BoardRunResult(
             run_id=run_id,
             status=final_status,
@@ -3964,6 +4320,7 @@ async def orchestrate_phase4_board(
             pre_board_stock_only_gate=gate["stock_only_gate"],
             pre_board_market_type_integrity_gate=gate["market_type_integrity_gate"],
             pre_board_gate_checks=gate["checks"],
+            paa_prescreen_summary=paa_summary_dict,
         )
     finally:
         try:

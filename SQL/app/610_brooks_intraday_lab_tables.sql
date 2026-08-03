@@ -1,0 +1,120 @@
+/* ================================================================
+   610_brooks_intraday_lab_tables.sql
+   Brooks Intraday Lab — isolated research / simulation persistence.
+
+   This module must never participate in live execution, IBKR orders,
+   LPA, proposal publication, or real portfolio state.
+   ================================================================ */
+
+USE DATABASE MIP;
+USE SCHEMA APP;
+
+CREATE TABLE IF NOT EXISTS MIP.APP.BROOKS_INTRADAY_RUN (
+    RUN_ID                VARCHAR(36)   NOT NULL PRIMARY KEY,
+    MODE                  VARCHAR(40)   NOT NULL,
+    STATUS                VARCHAR(20)   NOT NULL,
+    SELECTED_WEEK_START   DATE,
+    STARTED_AT            TIMESTAMP_NTZ,
+    COMPLETED_AT          TIMESTAMP_NTZ,
+    RULESET_VERSION       VARCHAR(64)   NOT NULL,
+    DOSSIER_VERSION       VARCHAR(64)   NOT NULL,
+    SYMBOL_LIST           VARIANT       NOT NULL,
+    STARTING_CASH         NUMBER(18, 2) NOT NULL,
+    ENDING_CASH           NUMBER(18, 2),
+    REALIZED_PNL          NUMBER(18, 4),
+    CONFIG_JSON           VARIANT,
+    CREATED_BY            VARCHAR(128),
+    ERROR_MESSAGE         VARCHAR(2000),
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+COMMENT ON TABLE MIP.APP.BROOKS_INTRADAY_RUN IS 'Brooks Intraday Lab replay run header. Simulation-only with no link to live portfolio or execution.';
+
+CREATE TABLE IF NOT EXISTS MIP.APP.BROOKS_INTRADAY_DOSSIER (
+    RUN_ID                VARCHAR(36)   NOT NULL,
+    SYMBOL                VARCHAR(20)   NOT NULL,
+    TRADING_DATE          DATE          NOT NULL,
+    PAA_ANALYSIS_ID       VARCHAR(64),
+    FROZEN_DOSSIER_JSON   VARIANT       NOT NULL,
+    SOURCE_HASHES         VARIANT,
+    DOSSIER_VERSION       VARCHAR(64)   NOT NULL,
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (RUN_ID, SYMBOL, TRADING_DATE)
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.BROOKS_INTRADAY_BAR_OBSERVATION (
+    RUN_ID                VARCHAR(36)   NOT NULL,
+    SYMBOL                VARCHAR(20)   NOT NULL,
+    TRADING_DATE          DATE          NOT NULL,
+    BAR_TS                TIMESTAMP_NTZ NOT NULL,
+    SEQUENCE_NUM          NUMBER        NOT NULL,
+    OHLCV_JSON            VARIANT,
+    OBJECTIVE_FACTS_JSON  VARIANT,
+    BROOKS_OBS_JSON       VARIANT,
+    PATTERN_STATE_JSON    VARIANT,
+    CONTEXT_JSON          VARIANT,
+    STATE_BEFORE          VARCHAR(64),
+    STATE_AFTER           VARCHAR(64),
+    ACTION                VARCHAR(64),
+    BLOCKERS_JSON         VARIANT,
+    EXPLANATION           VARCHAR(4000),
+    RULE_IDS              VARIANT,
+    DATA_QUALITY_STATUS   VARCHAR(32),
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (RUN_ID, SYMBOL, BAR_TS)
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.BROOKS_INTRADAY_PATTERN_INSTANCE (
+    PATTERN_INSTANCE_ID   VARCHAR(36)   NOT NULL PRIMARY KEY,
+    RUN_ID                VARCHAR(36)   NOT NULL,
+    SYMBOL                VARCHAR(20)   NOT NULL,
+    TERM_ID               VARCHAR(64)   NOT NULL,
+    START_TS              TIMESTAMP_NTZ NOT NULL,
+    LATEST_TS             TIMESTAMP_NTZ,
+    LIFECYCLE_STATUS      VARCHAR(20)   NOT NULL,
+    CONFIDENCE            FLOAT,
+    RELEVANT_LEVELS_JSON  VARIANT,
+    CONFIRMATION_TS       TIMESTAMP_NTZ,
+    FAILURE_TS            TIMESTAMP_NTZ,
+    EXPIRY_TS             TIMESTAMP_NTZ,
+    SOURCE_RULE_ID        VARCHAR(64),
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.BROOKS_INTRADAY_SIM_TRADE (
+    TRADE_ID              VARCHAR(36)   NOT NULL PRIMARY KEY,
+    RUN_ID                VARCHAR(36)   NOT NULL,
+    SYMBOL                VARCHAR(20)   NOT NULL,
+    DIRECTION             VARCHAR(10)   NOT NULL,
+    QUANTITY              NUMBER        NOT NULL,
+    SIGNAL_TS             TIMESTAMP_NTZ,
+    ENTRY_TS              TIMESTAMP_NTZ,
+    ENTRY_PRICE           NUMBER(18, 6),
+    EXIT_DECISION_TS      TIMESTAMP_NTZ,
+    EXIT_TS               TIMESTAMP_NTZ,
+    EXIT_PRICE            NUMBER(18, 6),
+    EXIT_REASON           VARCHAR(64),
+    INITIAL_CASH          NUMBER(18, 2),
+    REMAINING_CASH        NUMBER(18, 2),
+    REALIZED_PNL          NUMBER(18, 4),
+    RESULT_R              FLOAT,
+    MFA                   NUMBER(18, 6),
+    MAE                   NUMBER(18, 6),
+    RULE_VERSION          VARCHAR(64),
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.BROOKS_INTRADAY_BLOCKED_SIGNAL (
+    RUN_ID                VARCHAR(36)   NOT NULL,
+    SYMBOL                VARCHAR(20)   NOT NULL,
+    SIGNAL_TS             TIMESTAMP_NTZ NOT NULL,
+    CANDIDATE_ACTION      VARCHAR(64)   NOT NULL,
+    BLOCK_REASON          VARCHAR(128)  NOT NULL,
+    ACTIVE_POSITION_SYMBOL VARCHAR(20),
+    CANDIDATE_SCORE       FLOAT,
+    TIE_BREAK_JSON        VARIANT,
+    HYPOTHETICAL_JSON     VARIANT,
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (RUN_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION)
+);

@@ -28,10 +28,21 @@ class _ConnectEndpoint:
 
 
 def project_root() -> Path:
+    """Repo root containing cursorfiles (prefer tree with cursorfiles/.venv)."""
     path = Path(__file__).resolve()
-    for parent in (path, *path.parents):
-        if (parent / "cursorfiles").exists():
-            return parent
+    cursorfile_roots: list[Path] = []
+    venv_roots: list[Path] = []
+    for parent in path.parents:
+        cf = parent / "cursorfiles"
+        if not cf.is_dir():
+            continue
+        cursorfile_roots.append(parent)
+        if (cf / ".venv").is_dir():
+            venv_roots.append(parent)
+    if venv_roots:
+        return venv_roots[0]
+    if cursorfile_roots:
+        return cursorfile_roots[-1]
     return path.parents[5]
 
 
@@ -73,6 +84,10 @@ def resolve_live_bars_connect(portfolio_id: int | None = None) -> dict[str, Any]
     LIVE_PORTFOLIO_CONFIG host/port when portfolio_id is set (real-money gateway
     is often 7496 while .env IB_API_PORT stays 7497 for paper/TWS).
     Client id stays the dedicated live-bars id (9436) unless env overrides.
+
+    When portfolio_id is omitted (portfolio-agnostic market data), prefer the
+    first active LIVE gateway from LIVE_PORTFOLIO_CONFIG if one is configured.
+    Symbol-level bars do not depend on which portfolio is being analysed.
     """
     try:
         conn = dict(get_live_bars_subprocess_args())
@@ -84,9 +99,47 @@ def resolve_live_bars_connect(portfolio_id: int | None = None) -> dict[str, Any]
             "connect_timeout_sec": 10,
         }
 
-    if portfolio_id is None:
+    if portfolio_id is not None:
+        try:
+            from app.db import fetch_all, get_connection
+
+            db = get_connection()
+            try:
+                cur = db.cursor()
+                cur.execute(
+                    """
+                    SELECT IB_GATEWAY_HOST, IB_GATEWAY_PORT
+                      FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                     WHERE PORTFOLIO_ID = %s
+                    """,
+                    (int(portfolio_id),),
+                )
+                rows = fetch_all(cur)
+            finally:
+                db.close()
+            if rows:
+                row = rows[0]
+                if row.get("IB_GATEWAY_HOST"):
+                    conn["host"] = str(row["IB_GATEWAY_HOST"])
+                if row.get("IB_GATEWAY_PORT") is not None:
+                    conn["port"] = int(row["IB_GATEWAY_PORT"])
+        except Exception as exc:
+            logger.warning(
+                "resolve_live_bars_connect: portfolio %s lookup failed: %s",
+                portfolio_id,
+                exc,
+            )
         return conn
 
+    gateway = _preferred_market_data_gateway()
+    if gateway:
+        conn["host"] = gateway["host"]
+        conn["port"] = gateway["port"]
+    return conn
+
+
+def _preferred_market_data_gateway() -> dict[str, Any] | None:
+    """First active IB gateway for portfolio-agnostic symbol bar reads."""
     try:
         from app.db import fetch_all, get_connection
 
@@ -95,28 +148,31 @@ def resolve_live_bars_connect(portfolio_id: int | None = None) -> dict[str, Any]
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT IB_GATEWAY_HOST, IB_GATEWAY_PORT
+                SELECT IB_GATEWAY_HOST, IB_GATEWAY_PORT, ADAPTER_MODE
                   FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-                 WHERE PORTFOLIO_ID = %s
+                 WHERE IS_ACTIVE = TRUE
+                   AND IB_GATEWAY_PORT IS NOT NULL
+                 ORDER BY
+                   CASE WHEN UPPER(COALESCE(ADAPTER_MODE, '')) = 'LIVE' THEN 0 ELSE 1 END,
+                   PORTFOLIO_ID
+                 LIMIT 1
                 """,
-                (int(portfolio_id),),
             )
             rows = fetch_all(cur)
         finally:
             db.close()
-        if rows:
-            row = rows[0]
-            if row.get("IB_GATEWAY_HOST"):
-                conn["host"] = str(row["IB_GATEWAY_HOST"])
-            if row.get("IB_GATEWAY_PORT") is not None:
-                conn["port"] = int(row["IB_GATEWAY_PORT"])
     except Exception as exc:
-        logger.warning(
-            "resolve_live_bars_connect: portfolio %s lookup failed: %s",
-            portfolio_id,
-            exc,
-        )
-    return conn
+        logger.warning("resolve_live_bars_connect: market-data gateway lookup failed: %s", exc)
+        return None
+
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "host": str(row.get("IB_GATEWAY_HOST") or "127.0.0.1"),
+        "port": int(row["IB_GATEWAY_PORT"]),
+        "adapter_mode": row.get("ADAPTER_MODE"),
+    }
 
 
 def run_agent_ibkr_live_bars(

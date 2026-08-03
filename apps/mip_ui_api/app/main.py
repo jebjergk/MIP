@@ -1,16 +1,33 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest, management, market_pulse, parallel_worlds, ask, decisions, intraday, news, learning_ledger, performance_dashboard, symbol_tracker, live_intelligence, reference, tape_observer, structural_training, structural_timeline, committee, committee_performance, position_health, cockpit, agentic_authority_router
 from app.price_action import router as price_action_router
+from app.brooks_intraday import router as brooks_intraday_router
 
 logging.basicConfig(level=logging.INFO)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from app.brooks_intraday.experiment_phase9_worker import start_phase9_worker
+
+    try:
+        start_phase9_worker()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Brooks Phase 9 worker failed to start — API will run; fix Snowflake/Phase 9 init and restart"
+        )
+    yield
+
 
 app = FastAPI(
     title="MIP UI API",
     description="API for MIP pipeline runs, portfolios, AI digests, training status, and portfolio management.",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -53,6 +70,7 @@ app.include_router(position_health.router)
 app.include_router(cockpit.router)
 app.include_router(agentic_authority_router.router)
 app.include_router(price_action_router)
+app.include_router(brooks_intraday_router)
 
 
 @app.get("/")

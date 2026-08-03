@@ -24,6 +24,7 @@ import StructuralMarketTimeline from './pages/StructuralMarketTimeline'
 import StructuralCommitteeHearing from './pages/StructuralCommitteeHearing'
 import CommitteePerformance from './pages/CommitteePerformance'
 import PriceActionAnalyser from './pages/PriceActionAnalyser'
+import BrooksIntradayLab from './pages/BrooksIntradayLab'
 import AppLayout from './components/AppLayout'
 import { AskMipRuntimeProvider } from './context/AskMipRuntimeContext'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
@@ -45,6 +46,7 @@ function pageTitleForPath(pathname) {
     { pattern: '/training', title: 'Legacy Training Status' },
     { pattern: '/structural-timeline', title: 'Structural Market Timeline' },
     { pattern: '/price-action-analyser', title: 'Price Action Analyser' },
+    { pattern: '/research/brooks-intraday', title: 'Brooks Intraday Lab' },
     { pattern: '/structural-committee/:hearingId', title: 'Hearing Replay — Evidence Snapshot (historical)' },
     { pattern: '/structural-committee', title: 'Hearing Replay — Evidence Snapshot (historical)' },
     { pattern: '/committee-performance', title: 'Committee Bake-off' },
@@ -114,6 +116,7 @@ export default function App() {
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/structural-timeline" element={<StructuralMarketTimeline />} />
         <Route path="/price-action-analyser" element={<PriceActionAnalyser />} />
+        <Route path="/research/brooks-intraday" element={<BrooksIntradayLab />} />
         <Route path="/structural-committee" element={<StructuralCommitteeHearing />} />
         <Route path="/structural-committee/:hearingId" element={<StructuralCommitteeHearing />} />
         <Route path="/committee-performance" element={<CommitteePerformance />} />

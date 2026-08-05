@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from .constants import SIMULATION_BANNER
 from .context_repository import load_context_observations, load_pattern_snapshot_index
+from .dossier_access import unwrap_dossier
 from .historical_bar_repository import load_bars_for_symbol_week
 from .learning_constants import (
     BARS_PER_SYMBOL_WEEK,
@@ -50,11 +51,77 @@ def _berlin_ts(ts: Any) -> str | None:
     return dt.astimezone(ZoneInfo("Europe/Berlin")).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _load_context_attempt_meta(context_attempt_id: str) -> dict[str, Any] | None:
+    from app.db import get_connection
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT CONTEXT_ATTEMPT_ID, RUN_ID, CONTEXT_RULESET_VERSION, STATUS, NOTES,
+                   OBJECTIVE_ATTEMPT_ID, PATTERN_ATTEMPT_ID
+            FROM MIP.APP.BROOKS_INTRADAY_CONTEXT_ATTEMPT
+            WHERE CONTEXT_ATTEMPT_ID = %s
+            """,
+            (context_attempt_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [d[0].lower() for d in cur.description]
+        return dict(zip(cols, row))
+    finally:
+        conn.close()
+
+
+def validate_review_attempt_override(
+    *,
+    run_id: str,
+    context_attempt_id: str,
+    simulation_attempt_id: str,
+) -> dict[str, Any]:
+    """Review-only validation. Never mutates run pins or attempt status."""
+    ctx = _load_context_attempt_meta(context_attempt_id)
+    if not ctx:
+        raise ValueError(f"Context attempt not found: {context_attempt_id}")
+    if str(ctx.get("run_id")) != run_id:
+        raise ValueError("Context attempt does not belong to this run")
+    if str(ctx.get("status") or "").upper() != "COMPLETED":
+        raise ValueError(f"Context attempt is not COMPLETED ({ctx.get('status')})")
+
+    sim = load_simulation_attempt(simulation_attempt_id)
+    if not sim:
+        raise ValueError(f"Simulation attempt not found: {simulation_attempt_id}")
+    if str(sim.get("run_id")) != run_id:
+        raise ValueError("Simulation attempt does not belong to this run")
+    if str(sim.get("status") or "").upper() != "COMPLETED":
+        raise ValueError(f"Simulation attempt is not COMPLETED ({sim.get('status')})")
+    if str(sim.get("context_attempt_id")) != context_attempt_id:
+        raise ValueError("Simulation attempt is not linked to the selected context attempt")
+
+    return {
+        "context_attempt_id": context_attempt_id,
+        "simulation_attempt_id": simulation_attempt_id,
+        "context_ruleset": str(ctx.get("context_ruleset_version") or ""),
+        "simulation_ruleset": str(sim.get("simulation_ruleset_version") or "BROOKS_SIMULATION_RULESET_V0_1"),
+        "objective_attempt_id": str(ctx.get("objective_attempt_id") or "") or None,
+        "pattern_attempt_id": str(ctx.get("pattern_attempt_id") or "") or None,
+        "trade_count": int(sim.get("trade_count") or 0),
+        "realized_pnl": float(sim.get("realized_pnl") or 0),
+        "notes": ctx.get("notes"),
+    }
+
+
 def resolve_attempt_chain(
     run_id: str,
     state: dict[str, Any],
     cfg: dict[str, Any],
-) -> dict[str, str | None]:
+    *,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolve review attempt chain. Optional overrides are review-only (never pin writes)."""
     official = OFFICIAL_ATTEMPT_CHAIN.get(run_id, {})
     objective_id = (
         state.get("phase4_review_baseline_attempt_id")
@@ -80,15 +147,124 @@ def resolve_attempt_chain(
         or cfg.get("phase7_simulation_attempt_id")
         or official.get("simulation_attempt_id")
     )
+    context_ruleset = official.get("context_ruleset") or "BROOKS_CONTEXT_RULESET_V0_2"
+    simulation_ruleset = official.get("simulation_ruleset") or "BROOKS_SIMULATION_RULESET_V0_1"
+    review_override = False
+
+    if context_attempt_id or simulation_attempt_id:
+        if not context_attempt_id or not simulation_attempt_id:
+            raise ValueError("Both context_attempt_id and simulation_attempt_id are required for review override")
+        validated = validate_review_attempt_override(
+            run_id=run_id,
+            context_attempt_id=str(context_attempt_id),
+            simulation_attempt_id=str(simulation_attempt_id),
+        )
+        context_id = validated["context_attempt_id"]
+        simulation_id = validated["simulation_attempt_id"]
+        context_ruleset = validated["context_ruleset"] or context_ruleset
+        simulation_ruleset = validated["simulation_ruleset"] or simulation_ruleset
+        if validated.get("objective_attempt_id"):
+            objective_id = validated["objective_attempt_id"]
+        if validated.get("pattern_attempt_id"):
+            pattern_id = validated["pattern_attempt_id"]
+        review_override = True
+
     return {
         "objective_attempt_id": str(objective_id) if objective_id else None,
         "objective_ruleset": official.get("objective_ruleset") or "BROOKS_OBJECTIVE_RULESET_V0_1",
         "pattern_attempt_id": str(pattern_id) if pattern_id else None,
         "pattern_ruleset": official.get("pattern_ruleset") or "BROOKS_PATTERN_RULESET_V0_3",
         "context_attempt_id": str(context_id) if context_id else None,
-        "context_ruleset": official.get("context_ruleset") or "BROOKS_CONTEXT_RULESET_V0_2",
+        "context_ruleset": context_ruleset,
         "simulation_attempt_id": str(simulation_id) if simulation_id else None,
-        "simulation_ruleset": official.get("simulation_ruleset") or "BROOKS_SIMULATION_RULESET_V0_1",
+        "simulation_ruleset": simulation_ruleset,
+        "review_override": review_override,
+        "review_only": True,
+    }
+
+
+def list_review_chain_options(run_id: str, state: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    """Official pinned chain + completed alternative context/sim pairs (read-only)."""
+    official_chain = resolve_attempt_chain(run_id, state, cfg)
+    from app.db import get_connection
+
+    alternatives: list[dict[str, Any]] = []
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+              c.CONTEXT_ATTEMPT_ID,
+              c.CONTEXT_RULESET_VERSION,
+              c.NOTES,
+              c.CREATED_AT_UTC,
+              s.SIMULATION_ATTEMPT_ID,
+              s.TRADE_COUNT,
+              s.REALIZED_PNL,
+              s.SIMULATION_RULESET_VERSION
+            FROM MIP.APP.BROOKS_INTRADAY_CONTEXT_ATTEMPT c
+            JOIN MIP.APP.BROOKS_INTRADAY_SIMULATION_ATTEMPT s
+              ON s.CONTEXT_ATTEMPT_ID = c.CONTEXT_ATTEMPT_ID
+             AND s.RUN_ID = c.RUN_ID
+            WHERE c.RUN_ID = %s
+              AND c.STATUS = 'COMPLETED'
+              AND s.STATUS = 'COMPLETED'
+            ORDER BY c.CREATED_AT_UTC DESC
+            """,
+            (run_id,),
+        )
+        cols = [d[0].lower() for d in cur.description]
+        for row in cur.fetchall():
+            rec = dict(zip(cols, row))
+            ctx_id = str(rec["context_attempt_id"])
+            sim_id = str(rec["simulation_attempt_id"])
+            is_official = (
+                ctx_id == official_chain.get("context_attempt_id")
+                and sim_id == official_chain.get("simulation_attempt_id")
+            )
+            if is_official:
+                continue
+            alternatives.append(
+                {
+                    "label": (
+                        f"{rec.get('context_ruleset_version') or 'context'} · "
+                        f"ctx {ctx_id[:8]}... · sim {sim_id[:8]}... · "
+                        f"trades={int(rec.get('trade_count') or 0)}"
+                    ),
+                    "context_attempt_id": ctx_id,
+                    "simulation_attempt_id": sim_id,
+                    "context_ruleset": rec.get("context_ruleset_version"),
+                    "simulation_ruleset": rec.get("simulation_ruleset_version"),
+                    "trade_count": int(rec.get("trade_count") or 0),
+                    "realized_pnl": float(rec.get("realized_pnl") or 0),
+                    "notes": rec.get("notes"),
+                    "official": False,
+                    "review_only": True,
+                }
+            )
+    finally:
+        conn.close()
+
+    return {
+        "run_id": run_id,
+        "official": {
+            "label": (
+                f"Official pinned · "
+                f"{official_chain.get('context_ruleset')} · "
+                f"ctx {(official_chain.get('context_attempt_id') or '')[:8]}... · "
+                f"sim {(official_chain.get('simulation_attempt_id') or '')[:8]}..."
+            ),
+            "context_attempt_id": official_chain.get("context_attempt_id"),
+            "simulation_attempt_id": official_chain.get("simulation_attempt_id"),
+            "context_ruleset": official_chain.get("context_ruleset"),
+            "simulation_ruleset": official_chain.get("simulation_ruleset"),
+            "official": True,
+            "review_only": True,
+        },
+        "alternatives": alternatives,
+        "pin_mutation": False,
+        "note": "Selecting an alternative is review-only and does not change run pins or Freeze V1.",
     }
 
 
@@ -125,11 +301,12 @@ def _dossier_provenance_summary(run_id: str, dossiers: list[dict[str, Any]]) -> 
 def build_provenance_header(
     *,
     run_id: str,
-    attempts: dict[str, str | None],
+    attempts: dict[str, Any],
     cfg: dict[str, Any],
     dossiers: list[dict[str, Any]],
 ) -> dict[str, Any]:
     prov = _dossier_provenance_summary(run_id, dossiers)
+    review_override = bool(attempts.get("review_override"))
     return {
         "run_id": run_id,
         "attempt_chain": attempts,
@@ -138,6 +315,12 @@ def build_provenance_header(
         "simulation_only_banner": SIMULATION_ONLY_BANNER,
         "simulation_only_status": True,
         "meta_simulation_banner": SIMULATION_BANNER,
+        "review_override": review_override,
+        "review_only_banner": (
+            "REVIEW OVERRIDE — alternate completed chain (does not change official run pins)"
+            if review_override
+            else None
+        ),
     }
 
 
@@ -360,6 +543,9 @@ def _merge_symbol_grid(
     prev_state: str | None = None
     prev_action: str | None = None
     sym_upper = symbol.upper()
+    # Reconstruct V0.2 session high/low for room diagnostics (not persisted in payload).
+    session_hi: dict[str, float] = {}
+    session_lo: dict[str, float] = {}
 
     for bar in ordered:
         ts = _ts_key(bar.get("ts_utc"))
@@ -376,6 +562,21 @@ def _merge_symbol_grid(
         sim_eff = _simulation_effect_for_bar(ts, trades, blocked)
         dm = (obs or {}).get("derived_metrics_json") or {}
         ohlcv = _ohlcv_from_obs_or_bar(obs, bar)
+        close = ohlcv.get("close")
+        td_key = str(bar.get("trading_date") or (obs or {}).get("trading_date") or "")[:10]
+        bar_high = ohlcv.get("high")
+        bar_low = ohlcv.get("low")
+        session_range = None
+        if td_key and bar_high is not None and bar_low is not None:
+            try:
+                hi = float(bar_high)
+                lo = float(bar_low)
+                session_hi[td_key] = max(session_hi.get(td_key, hi), hi)
+                session_lo[td_key] = min(session_lo.get(td_key, lo), lo)
+                bar_range = max(hi - lo, 0.01)
+                session_range = max(session_hi[td_key] - session_lo[td_key], bar_range)
+            except (TypeError, ValueError):
+                session_range = None
         grid.append(
             {
                 "bar_ts": bar.get("ts_utc") or (obs or {}).get("bar_ts"),
@@ -392,6 +593,10 @@ def _merge_symbol_grid(
                 "state_after": st_after,
                 "selected_action": action,
                 "blockers": blockers,
+                "blocker_display": [_blocker_display_label(b, pj) for b in blockers],
+                "blocker_diagnostics": build_blocker_diagnostics(
+                    pj, close=close, session_range=session_range
+                ),
                 "simulation_effect": sim_eff,
                 "explanation": (ctx or {}).get("explanation") or (obs or {}).get("explanation"),
                 "is_state_transition": is_state_tr and prev_state is not None,
@@ -438,7 +643,9 @@ def _historical_account_summary(
         "trades": trade_count,
         "wins": wins,
         "losses": losses,
-        "blocked_entry_signals": load_blocked_signals(run_id) if run_id else [],
+        "blocked_entry_signals": (
+            load_blocked_signals(run_id, simulation_attempt_id=simulation_attempt_id) if run_id else []
+        ),
         "zero_trade_explanation": ZERO_TRADE_EXPLANATION if zero_trades else None,
         "pilot_week_detail": PILOT_ZERO_TRADE_DETAIL if zero_trades and run_id == PILOT_RUN_ID else None,
         "simulation_attempt_id": simulation_attempt_id,
@@ -513,8 +720,9 @@ def build_symbol_learning_payload(
     pattern_links = (
         load_bar_pattern_links(run_id, replay_attempt_id=str(pat_id), symbol=sym, limit=5000) if pat_id else []
     )
-    trades = load_sim_trades(run_id)
-    blocked = load_blocked_signals(run_id)
+    sim_id = attempts.get("simulation_attempt_id")
+    trades = load_sim_trades(run_id, simulation_attempt_id=sim_id)
+    blocked = load_blocked_signals(run_id, simulation_attempt_id=sim_id)
 
     grid = _merge_symbol_grid(
         bars=bars,
@@ -597,22 +805,141 @@ def _chart_bar(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _daily_levels_from_dossier(dossier: dict[str, Any] | None) -> dict[str, Any]:
-    if not dossier:
-        return {}
-    derived = dossier.get("derived_levels") or {}
-    inv = dossier.get("invalidation_level")
-    return {
-        "primary_support": _zone_mid(dossier.get("support_zones")),
-        "secondary_support": _secondary_support(dossier),
-        "resistance": _zone_mid(dossier.get("resistance_zones")),
-        "reclaim_level": dossier.get("reclaim_level"),
-        "do_not_chase_level": dossier.get("do_not_chase_level"),
-        "daily_thesis_invalidation": inv,
-        "intraday_setup_invalidation": derived.get("intraday_setup_invalidation", {}).get("level")
+    body = unwrap_dossier(dossier)
+    if not body:
+        return {
+            "trading_date": None,
+            "source": "frozen daily dossier",
+            "primary_support": None,
+            "secondary_support": None,
+            "resistance": None,
+            "reclaim_level": None,
+            "do_not_chase_level": None,
+            "daily_thesis_invalidation": None,
+            "intraday_setup_invalidation": None,
+            "entry_zone": None,
+            "simulated_trade_stop": None,
+            "levels": [],
+        }
+    derived = body.get("derived_levels") or {}
+    inv = body.get("invalidation_level")
+    if isinstance(inv, dict):
+        inv = inv.get("value")
+    reclaim = body.get("reclaim_level")
+    if isinstance(reclaim, dict):
+        reclaim = reclaim.get("value")
+    dnc = body.get("do_not_chase_level")
+    if isinstance(dnc, dict):
+        dnc = dnc.get("value")
+    setup_inv = (
+        derived.get("intraday_setup_invalidation", {}).get("level")
         if isinstance(derived.get("intraday_setup_invalidation"), dict)
-        else derived.get("intraday_setup_invalidation"),
+        else derived.get("intraday_setup_invalidation")
+    )
+    td = body.get("trading_date") or (dossier or {}).get("trading_date")
+    td_s = str(td)[:10] if td is not None else None
+    source = "frozen daily dossier"
+    levels = [
+        _level_entry("Support", _zone_mid(body.get("support_zones")), source, td_s),
+        _level_entry("Resistance", _zone_mid(body.get("resistance_zones")), source, td_s),
+        _level_entry("Reclaim", reclaim, source, td_s),
+        _level_entry("Do-not-chase", dnc, source, td_s),
+        _level_entry("Daily thesis invalidation", inv, source, td_s),
+        _level_entry("Intraday setup invalidation", setup_inv, source, td_s),
+    ]
+    return {
+        "trading_date": td_s,
+        "source": source,
+        "primary_support": _zone_mid(body.get("support_zones")),
+        "secondary_support": _secondary_support(body),
+        "resistance": _zone_mid(body.get("resistance_zones")),
+        "reclaim_level": reclaim,
+        "do_not_chase_level": dnc,
+        "daily_thesis_invalidation": inv,
+        "intraday_setup_invalidation": setup_inv,
         "entry_zone": derived.get("entry_zone"),
         "simulated_trade_stop": None,
+        "levels": levels,
+    }
+
+
+def _level_entry(name: str, value: Any, source: str, trading_date: str | None) -> dict[str, Any]:
+    return {
+        "name": name,
+        "value": value,
+        "display": value if value is not None else "Not available",
+        "source": source,
+        "trading_date": trading_date,
+    }
+
+
+def _blocker_display_label(blocker: str, payload: dict[str, Any]) -> str:
+    room = str(payload.get("room_class") or "").upper()
+    b = str(blocker or "").upper()
+    if b == "LIMITED_ROOM_TO_RESISTANCE" and room == "AT_RESISTANCE":
+        return "AT_RESISTANCE"
+    if b == "LIMITED_ROOM_TO_RESISTANCE" and room == "LIMITED_ROOM":
+        return "LIMITED_ROOM_TO_RESISTANCE"
+    return str(blocker)
+
+
+def build_blocker_diagnostics(
+    payload: dict[str, Any] | None,
+    *,
+    close: float | None = None,
+    session_range: float | None = None,
+) -> dict[str, Any] | None:
+    """Numerical explanation for resistance/room blockers (display only; V0.2 semantics unchanged).
+
+    V0.2 room fraction = (resistance - close) / max(session_high - session_low, bar_range).
+    session_range is reconstructed from bars through the current bar when not in payload.
+    """
+    pj = payload or {}
+    blockers = [str(b).upper() for b in (pj.get("blockers_json") or [])]
+    if "LIMITED_ROOM_TO_RESISTANCE" not in blockers and "DO_NOT_CHASE_LEVEL" not in blockers:
+        return None
+    levels = pj.get("active_levels_json") or {}
+    resistance = levels.get("primary_resistance")
+    room = str(pj.get("room_class") or "")
+    display = _blocker_display_label(
+        "LIMITED_ROOM_TO_RESISTANCE" if "LIMITED_ROOM_TO_RESISTANCE" in blockers else blockers[0],
+        pj,
+    )
+    dist = None
+    dist_pct = None
+    room_fraction = None
+    if close is not None and resistance is not None:
+        try:
+            dist = float(resistance) - float(close)
+            dist_pct = (dist / float(close)) * 100.0 if float(close) else None
+            if session_range is not None and float(session_range) > 0:
+                room_fraction = dist / float(session_range)
+        except (TypeError, ValueError):
+            dist = None
+            dist_pct = None
+            room_fraction = None
+    return {
+        "stored_blocker": "LIMITED_ROOM_TO_RESISTANCE"
+        if "LIMITED_ROOM_TO_RESISTANCE" in blockers
+        else (blockers[0] if blockers else None),
+        "display_blocker": display,
+        "decision_close": close,
+        "resistance": resistance,
+        "distance": dist,
+        "distance_pct": dist_pct,
+        "session_range": session_range,
+        "room_fraction": room_fraction,
+        "room_class": room,
+        "min_room_acceptable_fraction": 0.35,
+        "min_room_ample_fraction": 0.55,
+        "do_not_chase": levels.get("do_not_chase"),
+        "reclaim": levels.get("reclaim"),
+        "primary_support": levels.get("primary_support"),
+        "note": (
+            "Display label may refine AT_RESISTANCE vs LIMITED_ROOM; stored V0.2 blocker code is unchanged. "
+            "room_fraction = distance / session_range (V0.2). When distance <= 0, engine classifies AT_RESISTANCE "
+            "before the fraction thresholds."
+        ),
     }
 
 
@@ -621,19 +948,27 @@ def _zone_mid(zones: Any) -> float | None:
         return None
     z0 = zones[0]
     if isinstance(z0, dict):
-        lo, hi = z0.get("low"), z0.get("high")
+        lo = z0.get("low", z0.get("lower"))
+        hi = z0.get("high", z0.get("upper"))
         if lo is not None and hi is not None:
             return (float(lo) + float(hi)) / 2
+        if z0.get("price") is not None:
+            return float(z0["price"])
     return None
 
 
 def _secondary_support(dossier: dict[str, Any]) -> float | None:
-    zones = dossier.get("support_zones") or []
+    body = unwrap_dossier(dossier)
+    zones = body.get("support_zones") or []
     if len(zones) < 2:
         return None
     z1 = zones[1]
     if isinstance(z1, dict):
         lo, hi = z1.get("low"), z1.get("high")
+        if lo is not None and hi is not None:
+            return (float(lo) + float(hi)) / 2
+        lo = z1.get("lower")
+        hi = z1.get("upper")
         if lo is not None and hi is not None:
             return (float(lo) + float(hi)) / 2
     return None
@@ -649,11 +984,20 @@ def build_run_learning_payload(
     mode: str = "full",
     active_symbol: str | None = None,
     active_trading_date: date | None = None,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
 ) -> dict[str, Any]:
-    attempts = resolve_attempt_chain(run_id, state, cfg)
+    attempts = resolve_attempt_chain(
+        run_id,
+        state,
+        cfg,
+        context_attempt_id=context_attempt_id,
+        simulation_attempt_id=simulation_attempt_id,
+    )
     provenance = build_provenance_header(run_id=run_id, attempts=attempts, cfg=cfg, dossiers=dossiers)
-    trades = load_sim_trades(run_id)
-    account = _historical_account_summary(run_id, attempts.get("simulation_attempt_id"), trades)
+    sim_id = attempts.get("simulation_attempt_id")
+    trades = load_sim_trades(run_id, simulation_attempt_id=sim_id)
+    account = _historical_account_summary(run_id, sim_id, trades)
 
     week_start = state.get("selected_week_start") or cfg.get("selected_week_start")
     replay_progress = None
@@ -692,17 +1036,17 @@ def build_run_learning_payload(
         ts_key = _ts_key(latest.get("bar_ts")) if latest else ""
         pats = pat_index.get((sym_u, ts_key), []) if ts_key else []
         meaningful = [p for p in pats if str(p.get("lifecycle", "")).upper() in ("CONFIRMED", "DEVELOPING")]
-        dossier_match = _pick_dossier(dossiers, sym_u, active_trading_date)
+        dossier_match = unwrap_dossier(_pick_dossier(dossiers, sym_u, active_trading_date))
         symbol_overviews.append(
             {
                 "symbol": sym_u,
-                "paa_verdict": dossier_match.get("paa_verdict") if dossier_match else None,
+                "paa_verdict": dossier_match.get("paa_verdict"),
                 "current_state": latest.get("state_after"),
                 "latest_advisory_action": latest.get("selected_action"),
                 "thesis_effect": latest.get("thesis_effect"),
                 "active_meaningful_patterns": meaningful,
-                "nearest_support": dossier_match.get("support_zones") if dossier_match else None,
-                "nearest_resistance": dossier_match.get("resistance_zones") if dossier_match else None,
+                "nearest_support": dossier_match.get("support_zones"),
+                "nearest_resistance": dossier_match.get("resistance_zones"),
                 "reclaim_state": _reclaim_from_payload(latest),
                 "do_not_chase_status": latest.get("selected_action") == "DO_NOT_CHASE",
                 "simulated_position": None,
@@ -742,8 +1086,8 @@ def _reclaim_from_payload(ctx_row: dict[str, Any]) -> str | None:
 
 
 def build_account_timeline(run_id: str, simulation_attempt_id: str | None) -> dict[str, Any]:
-    trades = load_sim_trades(run_id)
-    blocked = load_blocked_signals(run_id)
+    trades = load_sim_trades(run_id, simulation_attempt_id=simulation_attempt_id)
+    blocked = load_blocked_signals(run_id, simulation_attempt_id=simulation_attempt_id)
     account = _historical_account_summary(run_id, simulation_attempt_id, trades)
     events: list[dict[str, Any]] = []
     for t in trades:

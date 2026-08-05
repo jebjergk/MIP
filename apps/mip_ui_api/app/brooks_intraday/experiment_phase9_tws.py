@@ -49,10 +49,27 @@ def classify_tws_preflight(preflight: dict[str, Any]) -> str:
 
 
 def check_tws_connection(*, persist_probe: bool = True) -> dict[str, Any]:
+    """Run TWS preflight; always returns a structured dict (never raises to callers)."""
     cfg = phase9_effective_ib_config()
     t0 = time.perf_counter()
-    preflight = run_ib_connection_preflight()
-    readiness = classify_tws_preflight(preflight)
+    try:
+        preflight = run_ib_connection_preflight()
+    except Exception as exc:
+        preflight = {
+            "connected": False,
+            "ib_messages": [str(exc)],
+            "error_class": type(exc).__name__,
+        }
+    try:
+        readiness = classify_tws_preflight(preflight)
+    except Exception as exc:
+        readiness = TWS_UNKNOWN
+        preflight.setdefault("ib_messages", []).append(str(exc))
+
+    messages = preflight.get("ib_messages") or []
+    primary_msg = messages[0] if messages else (
+        "TWS connected and contract qualified." if readiness == TWS_CONNECTED else "TWS preflight did not succeed."
+    )
     out: dict[str, Any] = {
         "readiness": readiness,
         "host": cfg.get("host"),
@@ -63,11 +80,19 @@ def check_tws_connection(*, persist_probe: bool = True) -> dict[str, Any]:
         "connected": bool(preflight.get("connected")),
         "historical_data_capability": preflight.get("historical_data_capability"),
         "ib_error_codes": preflight.get("ib_error_codes") or [],
-        "ib_messages": preflight.get("ib_messages") or [],
+        "ib_messages": messages,
         "client_id_collision_suspected": preflight.get("client_id_collision_suspected"),
         "duration_sec": round(time.perf_counter() - t0, 3),
         "checked_at_utc": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
+        "message": primary_msg,
+        "technical_detail": preflight.get("error_class") or (messages[1] if len(messages) > 1 else None),
+        "recoverable": readiness != TWS_CONNECTED,
+        "execution_path": preflight.get("execution_path", "subprocess"),
     }
     if readiness == TWS_CONNECTED:
+        out["recoverable"] = False
         out["last_successful_probe_at_utc"] = out["checked_at_utc"]
+    if preflight.get("error_class") == "IB_RUNTIME_MISSING":
+        out["readiness"] = TWS_UNKNOWN
+        out["message"] = primary_msg
     return out

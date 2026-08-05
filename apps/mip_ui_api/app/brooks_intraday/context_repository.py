@@ -15,6 +15,8 @@ from .context_engine import ContextResult
 from .context_ruleset_v01 import RULESET_VERSION as RULESET_V01
 from .context_ruleset_v02 import DEFAULT_PARAMETERS as V02_PARAMS
 from .context_ruleset_v02 import RULESET_VERSION as RULESET_V02
+from .context_ruleset_v03 import DEFAULT_PARAMETERS as V03_PARAMS
+from .context_ruleset_v03 import RULESET_VERSION as RULESET_V03
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,16 @@ def create_context_attempt(
                 pattern_attempt_id,
                 rs,
                 "IN_PROGRESS",
-                json.dumps(parameters or (V02_PARAMS if rs == RULESET_V02 else {})),
+                json.dumps(
+                    parameters
+                    or (
+                        V03_PARAMS
+                        if rs == RULESET_V03
+                        else V02_PARAMS
+                        if rs == RULESET_V02
+                        else {}
+                    )
+                ),
                 notes,
             ),
         )
@@ -186,6 +197,101 @@ def insert_context_observation(
         )
         if commit and own:
             conn.commit()
+    finally:
+        if own:
+            conn.close()
+
+
+def insert_context_observations_batch(
+    rows: list[dict[str, Any]],
+    *,
+    conn: Any | None = None,
+    commit: bool = True,
+    chunk_size: int = 500,
+    ruleset_version: str | None = None,
+) -> int:
+    """Bulk INSERT context observations (no MERGE)."""
+    from .persist_batch import execute_insert_select_from_values
+
+    if not rows:
+        return 0
+    rs = ruleset_version or RULESET_V01
+    own = conn is None
+    if own:
+        conn = get_connection()
+    table = """MIP.APP.BROOKS_INTRADAY_CONTEXT_OBSERVATION (
+            CONTEXT_OBSERVATION_ID, RUN_ID, CONTEXT_ATTEMPT_ID, SYMBOL, TRADING_DATE, BAR_TS,
+            SEQUENCE_NUM, OBJECTIVE_ATTEMPT_ID, PATTERN_ATTEMPT_ID, DOSSIER_ID,
+            CONTEXT_RULESET_VERSION, THESIS_EFFECT, STATE_BEFORE, STATE_AFTER,
+            SELECTED_ACTION, PAYLOAD_JSON, EXPLANATION
+        )"""
+    select_list = """
+            column1, column2, column3, column4, column5, column6,
+            column7, column8, column9, column10,
+            column11, column12, column13, column14,
+            column15, PARSE_JSON(column16), column17
+    """
+    written = 0
+    try:
+        cur = conn.cursor()
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            params = []
+            for r in chunk:
+                result: ContextResult = r["result"]
+                payload = {
+                    "layers_json": result.layers,
+                    "thesis_effect": result.thesis_effect,
+                    "state_before": result.state_before,
+                    "state_after": result.state_after,
+                    "selected_action": result.selected_action,
+                    "candidate_actions_json": result.candidate_actions,
+                    "blocked_candidates_json": result.blocked_candidates,
+                    "blockers_json": result.blockers,
+                    "supporting_evidence_json": result.supporting_evidence,
+                    "opposing_evidence_json": result.opposing_evidence,
+                    "active_levels_json": result.active_levels,
+                    "daily_thesis_invalidation": result.daily_thesis_invalidation,
+                    "intraday_setup_invalidation": result.intraday_setup_invalidation,
+                    "reclaim_stage": result.reclaim_stage,
+                    "support_status": result.support_status,
+                    "room_class": result.room_class,
+                    "context_classifications_json": result.context_classifications,
+                    "marker_flags_json": result.marker_flags,
+                    "rule_ids_json": result.rule_ids,
+                    "explanation": result.explanation,
+                }
+                params.append(
+                    (
+                        str(uuid.uuid4()),
+                        r["run_id"],
+                        r["context_attempt_id"],
+                        str(r["symbol"]).upper(),
+                        r["trading_date"],
+                        r["bar_ts_utc"],
+                        r["sequence_num"],
+                        r["objective_attempt_id"],
+                        r["pattern_attempt_id"],
+                        r.get("dossier_id"),
+                        r.get("ruleset_version") or rs,
+                        result.thesis_effect,
+                        result.state_before,
+                        result.state_after,
+                        result.selected_action,
+                        json.dumps(payload),
+                        result.explanation,
+                    )
+                )
+            execute_insert_select_from_values(
+                cur,
+                table_and_columns=table,
+                select_list_sql=select_list,
+                row_params=params,
+            )
+            written += len(chunk)
+            if commit:
+                conn.commit()
+        return written
     finally:
         if own:
             conn.close()

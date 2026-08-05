@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from .constants import SIMULATION_BANNER
 from .models import (
@@ -30,13 +31,24 @@ from . import store
 router = APIRouter(prefix="/research/brooks-intraday", tags=["brooks-intraday-lab"])
 
 
+@router.get("/persist-mode")
+def get_lab_persist_mode() -> dict:
+    """Runtime-loaded Brooks Lab persist mode (process env after restart)."""
+    from .experiment_phase9_service import _active_persist_mode
+
+    return _active_persist_mode()
+
+
 @router.get("/meta")
 def lab_meta() -> dict:
+    from .experiment_phase9_service import _active_persist_mode
+
     return {
         "module": "brooks-intraday-lab",
         "simulation_banner": SIMULATION_BANNER,
         "execution_authority": False,
         "real_portfolio_integration": False,
+        "brooks_persist_mode": _active_persist_mode(),
         "phase": "9_unseen_validation",
     }
 
@@ -165,9 +177,11 @@ def post_simulation_bulk(run_id: str, context_attempt_id: str | None = None) -> 
 def get_blocked_signals(run_id: str) -> dict:
     from .simulation_repository import load_blocked_signals
 
-    service.get_run_or_404(run_id)
-    rows = load_blocked_signals(run_id)
-    return {"run_id": run_id, "blocked_signals": rows, "count": len(rows)}
+    run = service.get_run_or_404(run_id)
+    cfg = run.configuration or {}
+    sim_id = cfg.get("phase7_simulation_attempt_id")
+    rows = load_blocked_signals(run_id, simulation_attempt_id=sim_id)
+    return {"run_id": run_id, "blocked_signals": rows, "count": len(rows), "simulation_attempt_id": sim_id}
 
 
 @router.post("/runs/{run_id}/context/bulk")
@@ -254,11 +268,18 @@ def get_learning_view(
     mode: str = "full",
     active_symbol: str | None = None,
     trading_date: date | None = None,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
 ) -> dict:
     from . import learning_service
 
     return learning_service.get_learning_view(
-        run_id, mode=mode, active_symbol=active_symbol, trading_date=trading_date
+        run_id,
+        mode=mode,
+        active_symbol=active_symbol,
+        trading_date=trading_date,
+        context_attempt_id=context_attempt_id,
+        simulation_attempt_id=simulation_attempt_id,
     )
 
 
@@ -280,6 +301,8 @@ def get_symbol_learning_view(
     simulated_trade_events: bool = False,
     action_changed_only: bool = False,
     meaningful_pattern_no_entry: bool = False,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
 ) -> dict:
     from . import learning_service
 
@@ -300,21 +323,79 @@ def get_symbol_learning_view(
         simulated_trade_events=simulated_trade_events,
         action_changed_only=action_changed_only,
         meaningful_pattern_no_entry=meaningful_pattern_no_entry,
+        context_attempt_id=context_attempt_id,
+        simulation_attempt_id=simulation_attempt_id,
     )
 
 
 @router.get("/runs/{run_id}/state-transitions")
-def get_state_transitions(run_id: str, symbol: str | None = None, mode: str = "full") -> dict:
+def get_state_transitions(
+    run_id: str,
+    symbol: str | None = None,
+    mode: str = "full",
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
+) -> dict:
     from . import learning_service
 
-    return learning_service.get_state_transitions(run_id, symbol=symbol, mode=mode)
+    return learning_service.get_state_transitions(
+        run_id,
+        symbol=symbol,
+        mode=mode,
+        context_attempt_id=context_attempt_id,
+        simulation_attempt_id=simulation_attempt_id,
+    )
 
 
 @router.get("/runs/{run_id}/account-timeline")
-def get_account_timeline(run_id: str) -> dict:
+def get_account_timeline(
+    run_id: str,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
+) -> dict:
     from . import learning_service
 
-    return learning_service.get_account_timeline(run_id)
+    return learning_service.get_account_timeline(
+        run_id,
+        context_attempt_id=context_attempt_id,
+        simulation_attempt_id=simulation_attempt_id,
+    )
+
+
+@router.get("/runs/{run_id}/sim-trades/{trade_id}/management-review")
+def get_trade_management_review(
+    run_id: str,
+    trade_id: str,
+    context_attempt_id: str,
+    simulation_attempt_id: str,
+) -> dict:
+    from fastapi import HTTPException
+
+    from . import learning_view
+    from .trade_management_review import build_trade_management_review
+
+    try:
+        learning_view.validate_review_attempt_override(
+            run_id=run_id,
+            context_attempt_id=context_attempt_id,
+            simulation_attempt_id=simulation_attempt_id,
+        )
+        return build_trade_management_review(
+            run_id,
+            trade_id,
+            context_attempt_id=context_attempt_id,
+            simulation_attempt_id=simulation_attempt_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/runs/{run_id}/review-chains")
+def get_review_chains(run_id: str) -> dict:
+    """List official pinned chain + completed alternate chains (review-only; never mutates pins)."""
+    from . import learning_service
+
+    return learning_service.get_review_chains(run_id)
 
 
 @router.get("/experiments/ruleset-freeze")
@@ -359,12 +440,24 @@ def get_experiment_trades(
     symbol: str | None = None,
     win_only: bool | None = None,
     exit_reason: str | None = None,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
 ) -> dict:
+    from fastapi import HTTPException
+
     from . import experiment_comparison
 
-    return experiment_comparison.list_trades_filtered(
-        run_id=run_id, symbol=symbol, win_only=win_only, exit_reason=exit_reason
-    )
+    try:
+        return experiment_comparison.list_trades_filtered(
+            run_id=run_id,
+            symbol=symbol,
+            win_only=win_only,
+            exit_reason=exit_reason,
+            context_attempt_id=context_attempt_id,
+            simulation_attempt_id=simulation_attempt_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/experiments/week-selection")
@@ -393,11 +486,29 @@ def phase9_status() -> dict:
 
 
 @router.post("/experiments/phase9/check-tws")
-def phase9_check_tws() -> dict:
-    from .experiment_phase9_service import build_phase9_status, check_tws_and_store
+def phase9_check_tws():
+    from .experiment_phase9_constants import TWS_UNKNOWN
+    from .experiment_phase9_service import build_phase9_status, post_check_tws
 
-    tws = check_tws_and_store()
-    return {"tws": tws, "status": build_phase9_status()}
+    try:
+        return post_check_tws()
+    except Exception as exc:
+        tws = {
+            "readiness": TWS_UNKNOWN,
+            "connected": False,
+            "message": "TWS check failed unexpectedly.",
+            "technical_detail": f"{type(exc).__name__}: {exc}",
+            "recoverable": True,
+            "ib_messages": [str(exc)],
+        }
+        try:
+            status = build_phase9_status()
+        except Exception:
+            status = None
+        return JSONResponse(
+            status_code=503,
+            content={"tws": tws, "status": status, "ok": False},
+        )
 
 
 @router.post("/experiments/phase9/run-next")

@@ -80,34 +80,41 @@ def complete_simulation_attempt(
 
 
 def clear_run_simulation_artifacts(run_id: str) -> None:
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM MIP.APP.BROOKS_INTRADAY_BLOCKED_SIGNAL WHERE RUN_ID = %s", (run_id,))
-        cur.execute("DELETE FROM MIP.APP.BROOKS_INTRADAY_SIM_TRADE WHERE RUN_ID = %s", (run_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    """Deprecated. Phase C forbids run-wide DELETE; raises to prevent accidental use."""
+    raise RuntimeError(
+        "clear_run_simulation_artifacts is disabled: use SIMULATION_ATTEMPT_ID isolation "
+        f"(refusing run-wide DELETE for run_id={run_id})"
+    )
 
 
-def insert_sim_trade(*, run_id: str, trade: dict[str, Any], conn: Any | None = None, commit: bool = True) -> None:
+def insert_sim_trade(
+    *,
+    run_id: str,
+    trade: dict[str, Any],
+    simulation_attempt_id: str | None = None,
+    conn: Any | None = None,
+    commit: bool = True,
+) -> None:
     own = conn is None
     if own:
         conn = get_connection()
+    attempt_id = simulation_attempt_id or trade.get("simulation_attempt_id")
     try:
         cur = conn.cursor()
         cur.execute(
             """
             INSERT INTO MIP.APP.BROOKS_INTRADAY_SIM_TRADE (
-                TRADE_ID, RUN_ID, SYMBOL, DIRECTION, QUANTITY, SIGNAL_TS, ENTRY_TS, ENTRY_PRICE,
+                TRADE_ID, RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, DIRECTION, QUANTITY,
+                SIGNAL_TS, ENTRY_TS, ENTRY_PRICE,
                 EXIT_DECISION_TS, EXIT_TS, EXIT_PRICE, EXIT_REASON,
                 INITIAL_CASH, REMAINING_CASH, REALIZED_PNL, RULE_VERSION
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 trade["trade_id"],
                 run_id,
+                attempt_id,
                 trade["symbol"],
                 trade.get("direction", "LONG"),
                 trade["quantity"],
@@ -132,23 +139,33 @@ def insert_sim_trade(*, run_id: str, trade: dict[str, Any], conn: Any | None = N
 
 
 def insert_blocked_signal(
-    *, run_id: str, signal: dict[str, Any], active_position_symbol: str | None, conn: Any | None = None, commit: bool = True
+    *,
+    run_id: str,
+    signal: dict[str, Any],
+    active_position_symbol: str | None,
+    simulation_attempt_id: str | None = None,
+    conn: Any | None = None,
+    commit: bool = True,
 ) -> None:
     own = conn is None
     if own:
         conn = get_connection()
+    attempt_id = simulation_attempt_id or signal.get("simulation_attempt_id")
+    if not attempt_id:
+        raise ValueError("simulation_attempt_id is required for blocked signal inserts")
     try:
         cur = conn.cursor()
         cur.execute(
             """
             INSERT INTO MIP.APP.BROOKS_INTRADAY_BLOCKED_SIGNAL (
-                RUN_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION, BLOCK_REASON,
+                RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION, BLOCK_REASON,
                 ACTIVE_POSITION_SYMBOL, TIE_BREAK_JSON
             )
-            VALUES (%s,%s,%s,%s,%s,%s, PARSE_JSON(%s))
+            VALUES (%s,%s,%s,%s,%s,%s,%s, PARSE_JSON(%s))
             """,
             (
                 run_id,
+                attempt_id,
                 signal["symbol"],
                 signal["signal_ts"],
                 signal["candidate_action"],
@@ -164,17 +181,123 @@ def insert_blocked_signal(
             conn.close()
 
 
-def load_sim_trades(run_id: str) -> list[dict[str, Any]]:
+def insert_sim_trades_batch(
+    *,
+    run_id: str,
+    simulation_attempt_id: str,
+    trades: list[dict[str, Any]],
+    conn: Any | None = None,
+    commit: bool = True,
+    chunk_size: int = 100,
+) -> int:
+    if not trades:
+        return 0
+    own = conn is None
+    if own:
+        conn = get_connection()
+    written = 0
+    try:
+        for i in range(0, len(trades), chunk_size):
+            for trade in trades[i : i + chunk_size]:
+                insert_sim_trade(
+                    run_id=run_id,
+                    trade=trade,
+                    simulation_attempt_id=simulation_attempt_id,
+                    conn=conn,
+                    commit=False,
+                )
+            written += len(trades[i : i + chunk_size])
+            if commit:
+                conn.commit()
+        return written
+    finally:
+        if own:
+            conn.close()
+
+
+def insert_blocked_signals_batch(
+    *,
+    run_id: str,
+    simulation_attempt_id: str,
+    signals: list[dict[str, Any]],
+    conn: Any | None = None,
+    commit: bool = True,
+    chunk_size: int = 200,
+) -> int:
+    if not signals:
+        return 0
+    own = conn is None
+    if own:
+        conn = get_connection()
+    written = 0
+    try:
+        for i in range(0, len(signals), chunk_size):
+            for sig in signals[i : i + chunk_size]:
+                insert_blocked_signal(
+                    run_id=run_id,
+                    signal=sig,
+                    active_position_symbol=sig.get("active_position_symbol"),
+                    simulation_attempt_id=simulation_attempt_id,
+                    conn=conn,
+                    commit=False,
+                )
+            written += len(signals[i : i + chunk_size])
+            if commit:
+                conn.commit()
+        return written
+    finally:
+        if own:
+            conn.close()
+
+
+def load_sim_trades(
+    run_id: str,
+    *,
+    simulation_attempt_id: str | None = None,
+    allow_legacy_fallback: bool = True,
+) -> list[dict[str, Any]]:
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if simulation_attempt_id:
+            cur.execute(
+                """
+                SELECT TRADE_ID, RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, DIRECTION, QUANTITY,
+                       SIGNAL_TS, ENTRY_TS, ENTRY_PRICE,
+                       EXIT_DECISION_TS, EXIT_TS, EXIT_PRICE, EXIT_REASON,
+                       INITIAL_CASH, REMAINING_CASH, REALIZED_PNL, RULE_VERSION
+                FROM MIP.APP.BROOKS_INTRADAY_SIM_TRADE
+                WHERE RUN_ID = %s AND SIMULATION_ATTEMPT_ID = %s
+                ORDER BY COALESCE(ENTRY_TS, SIGNAL_TS)
+                """,
+                (run_id, simulation_attempt_id),
+            )
+            cols = [d[0].lower() for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            if rows or not allow_legacy_fallback:
+                return rows
+            cur.execute(
+                """
+                SELECT TRADE_ID, RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, DIRECTION, QUANTITY,
+                       SIGNAL_TS, ENTRY_TS, ENTRY_PRICE,
+                       EXIT_DECISION_TS, EXIT_TS, EXIT_PRICE, EXIT_REASON,
+                       INITIAL_CASH, REMAINING_CASH, REALIZED_PNL, RULE_VERSION
+                FROM MIP.APP.BROOKS_INTRADAY_SIM_TRADE
+                WHERE RUN_ID = %s AND SIMULATION_ATTEMPT_ID IS NULL
+                ORDER BY COALESCE(ENTRY_TS, SIGNAL_TS)
+                """,
+                (run_id,),
+            )
+            cols = [d[0].lower() for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
         cur.execute(
             """
-            SELECT TRADE_ID, RUN_ID, SYMBOL, DIRECTION, QUANTITY, SIGNAL_TS, ENTRY_TS, ENTRY_PRICE,
+            SELECT TRADE_ID, RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, DIRECTION, QUANTITY,
+                   SIGNAL_TS, ENTRY_TS, ENTRY_PRICE,
                    EXIT_DECISION_TS, EXIT_TS, EXIT_PRICE, EXIT_REASON,
                    INITIAL_CASH, REMAINING_CASH, REALIZED_PNL, RULE_VERSION
             FROM MIP.APP.BROOKS_INTRADAY_SIM_TRADE
-            WHERE RUN_ID = %s
+            WHERE RUN_ID = %s AND SIMULATION_ATTEMPT_ID IS NULL
             ORDER BY COALESCE(ENTRY_TS, SIGNAL_TS)
             """,
             (run_id,),
@@ -210,30 +333,69 @@ def load_simulation_attempt(simulation_attempt_id: str | None) -> dict[str, Any]
         conn.close()
 
 
-def load_blocked_signals(run_id: str, *, limit: int = 5000) -> list[dict[str, Any]]:
+def load_blocked_signals(
+    run_id: str,
+    *,
+    simulation_attempt_id: str | None = None,
+    allow_legacy_fallback: bool = True,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    from .persist_integrity import LEGACY_UNSCOPED_SIM_ATTEMPT
+
     conn = get_connection()
     try:
         cur = conn.cursor()
+
+        def _parse(rows_raw: list) -> list[dict[str, Any]]:
+            cols = [d[0].lower() for d in cur.description]
+            out = []
+            for raw in rows_raw:
+                rec = dict(zip(cols, raw))
+                tj = rec.get("tie_break_json")
+                if isinstance(tj, str):
+                    rec["tie_break_json"] = json.loads(tj)
+                out.append(rec)
+            return out
+
+        if simulation_attempt_id:
+            cur.execute(
+                """
+                SELECT RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION, BLOCK_REASON,
+                       ACTIVE_POSITION_SYMBOL, TIE_BREAK_JSON
+                FROM MIP.APP.BROOKS_INTRADAY_BLOCKED_SIGNAL
+                WHERE RUN_ID = %s AND SIMULATION_ATTEMPT_ID = %s
+                ORDER BY SIGNAL_TS, SYMBOL
+                LIMIT %s
+                """,
+                (run_id, simulation_attempt_id, limit),
+            )
+            rows = _parse(cur.fetchall())
+            if rows or not allow_legacy_fallback:
+                return rows
+            cur.execute(
+                """
+                SELECT RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION, BLOCK_REASON,
+                       ACTIVE_POSITION_SYMBOL, TIE_BREAK_JSON
+                FROM MIP.APP.BROOKS_INTRADAY_BLOCKED_SIGNAL
+                WHERE RUN_ID = %s AND SIMULATION_ATTEMPT_ID = %s
+                ORDER BY SIGNAL_TS, SYMBOL
+                LIMIT %s
+                """,
+                (run_id, LEGACY_UNSCOPED_SIM_ATTEMPT, limit),
+            )
+            return _parse(cur.fetchall())
         cur.execute(
             """
-            SELECT RUN_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION, BLOCK_REASON,
+            SELECT RUN_ID, SIMULATION_ATTEMPT_ID, SYMBOL, SIGNAL_TS, CANDIDATE_ACTION, BLOCK_REASON,
                    ACTIVE_POSITION_SYMBOL, TIE_BREAK_JSON
             FROM MIP.APP.BROOKS_INTRADAY_BLOCKED_SIGNAL
-            WHERE RUN_ID = %s
+            WHERE RUN_ID = %s AND SIMULATION_ATTEMPT_ID = %s
             ORDER BY SIGNAL_TS, SYMBOL
             LIMIT %s
             """,
-            (run_id, limit),
+            (run_id, LEGACY_UNSCOPED_SIM_ATTEMPT, limit),
         )
-        cols = [d[0].lower() for d in cur.description]
-        out = []
-        for raw in cur.fetchall():
-            rec = dict(zip(cols, raw))
-            tj = rec.get("tie_break_json")
-            if isinstance(tj, str):
-                rec["tie_break_json"] = json.loads(tj)
-            out.append(rec)
-        return out
+        return _parse(cur.fetchall())
     finally:
         conn.close()
 

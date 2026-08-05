@@ -379,6 +379,7 @@ def load_bar_pattern_links(
 
 
 def pattern_sequence_hash(run_id: str, *, replay_attempt_id: str) -> str:
+    """Official production hash. ORDER BY includes PATTERN_INSTANCE_ID (attempt-specific ties)."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -396,6 +397,183 @@ def pattern_sequence_hash(run_id: str, *, replay_attempt_id: str) -> str:
         return hashlib.sha256("\n".join(parts).encode()).hexdigest()
     finally:
         conn.close()
+
+
+def pattern_semantic_sequence_hash(run_id: str, *, replay_attempt_id: str) -> str:
+    """Benchmark semantic hash: same content fields, no PATTERN_INSTANCE_ID in ORDER BY.
+
+    Production pattern_sequence_hash must not be altered for cross-attempt comparison.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT TRADING_DATE, START_TS, SYMBOL, PATTERN_FAMILY, LIFECYCLE_STATUS,
+                   RELEVANT_PRICES_JSON, LIFECYCLE_HISTORY_JSON
+            FROM MIP.APP.BROOKS_INTRADAY_PATTERN_INSTANCE
+            WHERE RUN_ID = %s AND REPLAY_ATTEMPT_ID = %s
+            ORDER BY START_TS, SYMBOL, PATTERN_FAMILY, LIFECYCLE_STATUS,
+                     TO_VARCHAR(RELEVANT_PRICES_JSON), TO_VARCHAR(LIFECYCLE_HISTORY_JSON)
+            """,
+            (run_id, replay_attempt_id),
+        )
+        parts = ["|".join(str(x) for x in row) for row in cur.fetchall()]
+        return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    finally:
+        conn.close()
+
+
+def insert_pattern_instances_batch(
+    rows: list[tuple[str, PatternRecord]],
+    *,
+    run_id: str,
+    replay_attempt_id: str,
+    pattern_ruleset_version: str | None = None,
+    conn: Any | None = None,
+    commit: bool = True,
+    chunk_size: int = 500,
+) -> int:
+    """Bulk INSERT final pattern instance rows (no MERGE)."""
+    from .persist_batch import execute_insert_select_from_values
+
+    if not rows:
+        return 0
+    prsv = pattern_ruleset_version or RULESET_VERSION
+    own = conn is None
+    if own:
+        conn = get_connection()
+    table = """MIP.APP.BROOKS_INTRADAY_PATTERN_INSTANCE (
+            PATTERN_INSTANCE_ID, RUN_ID, REPLAY_ATTEMPT_ID, SYMBOL, TRADING_DATE,
+            TERM_ID, PATTERN_FAMILY, DIRECTION, START_TS, LATEST_TS, CURRENT_TS,
+            LIFECYCLE_STATUS, CONFIDENCE, RELEVANT_LEVELS_JSON, RELEVANT_PRICES_JSON,
+            CONFIRMATION_TS, FAILURE_TS, EXPIRY_TS, SOURCE_RULE_ID,
+            SUPPORTING_OBSERVATION_IDS, SUPPORTING_RULE_IDS,
+            CONFIRMATION_RULE_ID, FAILURE_RULE_ID, EXPIRY_RULE_ID,
+            LIFECYCLE_HISTORY_JSON, PATTERN_RULESET_VERSION, PARENT_PATTERN_INSTANCE_ID,
+            EXPLANATION, ACTION
+        )"""
+    select_list = """
+            column1, column2, column3, column4, column5,
+            column6, column7, column8, column9, column10, column11,
+            column12, column13, PARSE_JSON(column14), PARSE_JSON(column15),
+            column16, column17, column18, column19,
+            PARSE_JSON(column20), PARSE_JSON(column21),
+            column22, column23, column24,
+            PARSE_JSON(column25), column26, column27,
+            column28, column29
+    """
+    written = 0
+    try:
+        cur = conn.cursor()
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            params = []
+            for sym, pat in chunk:
+                params.append(
+                    (
+                        pat.pattern_instance_id,
+                        run_id,
+                        replay_attempt_id,
+                        sym.upper(),
+                        pat.trading_date,
+                        pat.pattern_family,
+                        pat.pattern_family,
+                        pat.direction,
+                        pat.start_ts,
+                        pat.current_ts,
+                        pat.current_ts,
+                        pat.lifecycle,
+                        pat.confidence,
+                        json.dumps({}),
+                        json.dumps(pat.relevant_prices),
+                        pat.confirmation_ts,
+                        pat.failure_ts,
+                        pat.expiry_ts,
+                        pat.supporting_rule_ids[0] if pat.supporting_rule_ids else None,
+                        json.dumps(pat.supporting_observation_ids),
+                        json.dumps(pat.supporting_rule_ids),
+                        pat.confirmation_rule_id,
+                        pat.failure_rule_id,
+                        pat.expiry_rule_id,
+                        json.dumps(pat.lifecycle_history),
+                        prsv,
+                        pat.parent_pattern_instance_id,
+                        pat.explanation,
+                        pat.action,
+                    )
+                )
+            execute_insert_select_from_values(
+                cur,
+                table_and_columns=table,
+                select_list_sql=select_list,
+                row_params=params,
+            )
+            written += len(chunk)
+            if commit:
+                conn.commit()
+        return written
+    finally:
+        if own:
+            conn.close()
+
+
+def insert_bar_pattern_links_batch(
+    links: list[dict[str, Any]],
+    *,
+    run_id: str,
+    replay_attempt_id: str,
+    conn: Any | None = None,
+    commit: bool = True,
+    chunk_size: int = 500,
+) -> int:
+    from .persist_batch import execute_insert_select_from_values
+
+    if not links:
+        return 0
+    own = conn is None
+    if own:
+        conn = get_connection()
+    table = """MIP.APP.BROOKS_INTRADAY_BAR_PATTERN_LINK (
+            RUN_ID, REPLAY_ATTEMPT_ID, SYMBOL, TRADING_DATE, BAR_TS,
+            ACTIVE_PATTERN_IDS, PATTERN_SNAPSHOT_JSON, ACTION, EXPLANATION
+        )"""
+    select_list = """
+            column1, column2, column3, column4, column5,
+            PARSE_JSON(column6), PARSE_JSON(column7), column8, column9
+    """
+    written = 0
+    try:
+        cur = conn.cursor()
+        for i in range(0, len(links), chunk_size):
+            chunk = links[i : i + chunk_size]
+            params = [
+                (
+                    run_id,
+                    replay_attempt_id,
+                    str(link["symbol"]).upper(),
+                    link["trading_date"],
+                    link["bar_ts_utc"],
+                    json.dumps(link["active_pattern_ids"]),
+                    json.dumps(link["pattern_snapshot"]),
+                    link["action"],
+                    link["explanation"],
+                )
+                for link in chunk
+            ]
+            execute_insert_select_from_values(
+                cur,
+                table_and_columns=table,
+                select_list_sql=select_list,
+                row_params=params,
+            )
+            written += len(chunk)
+            if commit:
+                conn.commit()
+        return written
+    finally:
+        if own:
+            conn.close()
 
 
 def count_pattern_instances(run_id: str, *, replay_attempt_id: str) -> int:

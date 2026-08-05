@@ -12,6 +12,7 @@ from .experiment_execution_repository import (
     try_claim_lease,
 )
 from .experiment_phase9_constants import (
+    ACTION_PAUSE,
     LEASE_SEC,
     OVERALL_COMPLETED,
     OVERALL_FAILED_RECOVERABLE,
@@ -21,7 +22,7 @@ from .experiment_phase9_constants import (
     OVERALL_WAITING_TWS,
     WORKER_POLL_SEC,
 )
-from .experiment_phase9_engine import execute_work_unit
+from .experiment_phase9_engine import _apply_pause_if_requested, execute_work_unit
 from .experiment_phase9_service import startup_recovery, worker_owner_id
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def _worker_loop() -> None:
             ):
                 time.sleep(WORKER_POLL_SEC)
                 continue
-            if status == OVERALL_WAITING_FOR_TWS:
+            if status == OVERALL_WAITING_TWS:
                 time.sleep(WORKER_POLL_SEC)
                 continue
             eid = ex["execution_id"]
@@ -53,14 +54,23 @@ def _worker_loop() -> None:
                 continue
             try:
                 ex = get_active_execution() or ex
+                if _apply_pause_if_requested(ex, owner):
+                    continue
+                if ex.get("requested_action") == ACTION_PAUSE:
+                    from .experiment_execution_repository import update_execution
+
+                    update_execution(eid, requested_action=None)
+                    ex = get_active_execution() or ex
+                    if _apply_pause_if_requested(ex, owner):
+                        continue
+                elif ex.get("requested_action"):
+                    from .experiment_execution_repository import update_execution
+
+                    update_execution(eid, requested_action=None, overall_status=OVERALL_RUNNING)
+                    ex = get_active_execution() or ex
                 if ex.get("overall_status") in (OVERALL_RUNNING, OVERALL_FAILED_RECOVERABLE) or ex.get(
                     "requested_action"
                 ):
-                    if ex.get("requested_action"):
-                        from .experiment_execution_repository import update_execution
-
-                        update_execution(eid, requested_action=None, overall_status=OVERALL_RUNNING)
-                        ex = get_active_execution() or ex
                     execute_work_unit(ex, owner)
             finally:
                 release_lease(eid, owner)

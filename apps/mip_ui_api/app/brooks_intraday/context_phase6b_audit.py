@@ -66,8 +66,54 @@ V03_ALIASES = {
 }
 
 
-def ui_locator(run_id: str, symbol: str, bar_ts: Any) -> str:
-    return f"brooks-lab/{run_id}/{symbol}@{str(bar_ts)[:19]}#CTX"
+def ui_locator(
+    run_id: str,
+    symbol: str,
+    bar_ts: Any,
+    *,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
+) -> str:
+    ts = str(bar_ts).replace(" ", "T")[:19]
+    base = f"brooks-lab/{run_id}/{symbol}@{ts}#CTX"
+    if context_attempt_id and simulation_attempt_id:
+        return (
+            f"{base}?context_attempt_id={context_attempt_id}"
+            f"&simulation_attempt_id={simulation_attempt_id}"
+        )
+    return base
+
+
+def parse_ui_locator(locator: str) -> dict[str, str | None]:
+    """Parse brooks-lab locator, including optional review-chain attempt ids."""
+    text = str(locator or "").strip()
+    out: dict[str, str | None] = {
+        "run_id": None,
+        "symbol": None,
+        "bar_ts": None,
+        "context_attempt_id": None,
+        "simulation_attempt_id": None,
+    }
+    if not text.startswith("brooks-lab/"):
+        return out
+    body = text[len("brooks-lab/") :]
+    path, _, query = body.partition("?")
+    path = path.split("#", 1)[0]
+    run_part, _, rest = path.partition("/")
+    out["run_id"] = run_part or None
+    if "@" in rest:
+        sym, _, ts = rest.partition("@")
+        out["symbol"] = sym or None
+        out["bar_ts"] = ts.replace(" ", "T")[:19] if ts else None
+    if query:
+        from urllib.parse import parse_qs
+
+        qs = parse_qs(query, keep_blank_values=False)
+        if qs.get("context_attempt_id"):
+            out["context_attempt_id"] = qs["context_attempt_id"][0]
+        if qs.get("simulation_attempt_id"):
+            out["simulation_attempt_id"] = qs["simulation_attempt_id"][0]
+    return out
 
 
 def _payload(r: dict) -> dict:

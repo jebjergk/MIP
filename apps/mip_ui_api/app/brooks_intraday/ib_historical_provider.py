@@ -12,10 +12,10 @@ from typing import Any
 
 from .bars import HistoricalBar, BAR_SIZE_MINUTES
 from .calendar import NY_TZ
+from .brooks_ib_connect import resolve_brooks_phase9_ib_connect
 from app.services.ibkr_live_bars import (
     parse_json_payload,
     project_root,
-    resolve_live_bars_connect,
 )
 
 UTC = timezone.utc
@@ -47,7 +47,7 @@ def fetch_session_bars_ib(
             "IBKR historical fetch runtime not found.",
         )
 
-    conn = resolve_live_bars_connect(portfolio_id=None)
+    conn = resolve_brooks_phase9_ib_connect()
     request_id = str(uuid.uuid4())
     cmd = [
         str(py),
@@ -57,7 +57,7 @@ def fetch_session_bars_ib(
         "--port",
         str(int(conn.get("port", 7497))),
         "--client-id",
-        str(int(conn.get("client_id", 9437)) + 1),
+        str(int(conn.get("client_id", 9447))),
         "--symbol",
         symbol.upper(),
         "--trading-date",

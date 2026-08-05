@@ -10,6 +10,7 @@ from .calendar import resolve_week_sessions
 from .experiment_analytics import build_week_report, list_validation_run_ids
 from .experiment_execution_repository import (
     append_event,
+    get_active_execution,
     list_stages,
     renew_lease,
     update_execution,
@@ -132,6 +133,11 @@ def _stage_done(stages: list[dict], week: date, key: str) -> bool:
 
 
 def _apply_pause_if_requested(execution: dict[str, Any], owner: str) -> bool:
+    """Honor PAUSE_REQUESTED from Snowflake (never trust a stale in-memory execution dict)."""
+    eid = execution["execution_id"]
+    fresh = get_active_execution()
+    if fresh and str(fresh.get("execution_id")) == str(eid):
+        execution = fresh
     if not execution.get("pause_requested"):
         return False
     update_execution(
@@ -161,8 +167,14 @@ def _set_waiting_tws(execution_id: str, tws: dict, err: dict | None = None) -> N
     )
 
 
-def _run_pipeline_stage(state: dict[str, Any], stage_key: str) -> dict[str, Any]:
+def _run_pipeline_stage(
+    state: dict[str, Any],
+    stage_key: str,
+    *,
+    execution_id: str | None = None,
+) -> dict[str, Any]:
     from . import store
+    from .experiment_progress import make_progress_callback, patch_stage_progress
     from .replay_engine import run_objective_replay_bulk, run_pattern_replay_bulk
     from .pattern_ruleset_v03 import RULESET_VERSION as PATTERN_V03
 
@@ -170,12 +182,15 @@ def _run_pipeline_stage(state: dict[str, Any], stage_key: str) -> dict[str, Any]
     if stage_key == STAGE_OBJECTIVE_REPLAY:
         if state.get("phase4_review_baseline_attempt_id"):
             return {"attempt_id": state["phase4_review_baseline_attempt_id"], "skipped": True}
-        obj_id = run_objective_replay_bulk(state, progress_every=50)
+        cb = make_progress_callback(execution_id, stage=stage_key, total=1560, unit="observations", every=100)
+        obj_id = run_objective_replay_bulk(state, progress_every=50, on_progress=cb)
         state["phase4_review_baseline_attempt_id"] = obj_id
         state.setdefault("configuration", {})["phase4_review_baseline_attempt_id"] = obj_id
         with store._lock:
             store._runs[run_id] = state
             store._persist_run_header(state)
+        if execution_id:
+            patch_stage_progress(execution_id, stage=stage_key, completed=1560, total=1560, clear=True)
         return {"attempt_id": obj_id, "row_count": 1560}
 
     if stage_key == STAGE_PATTERN_REPLAY:
@@ -185,22 +200,30 @@ def _run_pipeline_stage(state: dict[str, Any], stage_key: str) -> dict[str, Any]
         state["ruleset_version"] = PATTERN_V03
         state.setdefault("configuration", {})["pattern_ruleset_version"] = PATTERN_V03
         state.pop("_pattern_session_state", None)
-        pat_id = run_pattern_replay_bulk(state, progress_every=50)
+        # Pattern schedule length equals bar-steps; progress unit is schedule steps.
+        sched_total = 390
+        cb = make_progress_callback(execution_id, stage=stage_key, total=sched_total, unit="schedule_steps", every=50)
+        pat_id = run_pattern_replay_bulk(state, progress_every=50, on_progress=cb)
         state["phase5_pattern_v03_attempt_id"] = pat_id
         state.setdefault("configuration", {})["phase5_pattern_v03_attempt_id"] = pat_id
         with store._lock:
             store._runs[run_id] = state
             store._persist_run_header(state)
+        if execution_id:
+            patch_stage_progress(execution_id, stage=stage_key, completed=sched_total, total=sched_total, clear=True)
         return {"attempt_id": pat_id, "row_count": 544}
 
     if stage_key == STAGE_CONTEXT_REPLAY:
         cfg = state.get("configuration") or {}
         if cfg.get("phase6b_context_attempt_id"):
             return {"attempt_id": cfg["phase6b_context_attempt_id"], "skipped": True}
-        ctx_out = store.run_context_bulk_v02(run_id)
+        cb = make_progress_callback(execution_id, stage=stage_key, total=1560, unit="observations", every=100)
+        ctx_out = store.run_context_bulk_v02(run_id, on_progress=cb)
         ctx_id = str(ctx_out["context_attempt_id"])
         with store._lock:
             state = store._runs[run_id]
+        if execution_id:
+            patch_stage_progress(execution_id, stage=stage_key, completed=1560, total=1560, clear=True)
         return {"attempt_id": ctx_id, "row_count": 1560}
 
     if stage_key == STAGE_SIMULATION_REPLAY:
@@ -531,7 +554,7 @@ def execute_work_unit(execution: dict[str, Any], owner: str) -> None:
         state = _run_state(run_id)
         upsert_stage(eid, ws, stage, stage_status="RUNNING", started_at=_utc_now())
         try:
-            out = _run_pipeline_stage(state, stage)
+            out = _run_pipeline_stage(state, stage, execution_id=eid)
         except Exception as exc:
             upsert_stage(
                 eid,

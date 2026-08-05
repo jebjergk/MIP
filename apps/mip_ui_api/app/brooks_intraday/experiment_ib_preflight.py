@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import subprocess
 import time
 import uuid
 from datetime import date, datetime, timezone
@@ -20,7 +21,8 @@ from .ib_historical_provider import (
     ib_payload_to_historical_bars,
 )
 from .interval_validation import expected_interval_starts_ny, interval_sets_match
-from app.services.ibkr_live_bars import resolve_live_bars_connect
+from .brooks_ib_connect import resolve_brooks_phase9_ib_connect
+from app.services.ibkr_live_bars import parse_json_payload, project_root
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +46,15 @@ PHASE2B_REFERENCE = {
 
 
 def phase9_effective_ib_config() -> dict[str, Any]:
-    conn = resolve_live_bars_connect(portfolio_id=None)
-    historical_client_id = int(conn.get("client_id", 9437)) + 1
+    conn = resolve_brooks_phase9_ib_connect()
+    historical_client_id = int(conn["historical_subprocess_client_id"])
     return {
         "provider_module": "app.brooks_intraday.ib_historical_provider",
         "subprocess_script": "cursorfiles/fetch_ibkr_historical_session_bars.py",
-        "resolve_connect": "app.services.ibkr_live_bars.resolve_live_bars_connect(None)",
+        "resolve_connect": "app.brooks_intraday.brooks_ib_connect.resolve_brooks_phase9_ib_connect()",
         "host": conn.get("host"),
         "port": int(conn.get("port", 7497)),
-        "live_bars_client_id": int(conn.get("client_id", 9436)),
+        "live_bars_client_id": int(conn.get("live_bars_client_id", 9436)),
         "historical_subprocess_client_id": historical_client_id,
         "connect_timeout_sec": conn.get("connect_timeout_sec", 10),
         "contract": "Stock(symbol, SMART, USD)",
@@ -63,7 +65,7 @@ def phase9_effective_ib_config() -> dict[str, Any]:
         "use_rth": True,
         "interval_minutes": 5,
         "fetch_timeout_sec": 90,
-        "intentional_client_id_offset": "historical uses live_bars_client_id + 1 (same as Phase 2B path)",
+        "intentional_client_id_offset": "Brooks Phase 9 uses BROOKS_PHASE9_IB_CLIENT_ID (default 9447), not live_bars+1",
     }
 
 
@@ -85,7 +87,7 @@ def compare_phase2b_phase9_config() -> dict[str, Any]:
                 "field": "historical_client_id",
                 "phase2b_observed": str(PHASE2B_REFERENCE["reported_historical_client_id"]),
                 "phase9_current": str(p9["historical_subprocess_client_id"]),
-                "note": "Derived from ibkr_host_config live_bars id + 1; may differ if env changed.",
+                "note": "Brooks Phase 9 uses dedicated BROOKS_PHASE9_IB_CLIENT_ID (default 9447), not live_bars+1.",
             }
         )
     same_fields = [
@@ -130,78 +132,84 @@ def _mask_accounts(accounts: list[str]) -> list[str]:
     return out
 
 
+def _preflight_subprocess_paths() -> tuple[Any, Any, Any]:
+    root = project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "ibkr_connection_preflight.py"
+    return root, py, script
+
+
 def run_ib_connection_preflight(*, probe_client_id: int | None = None) -> dict[str, Any]:
-    """Connect to TWS/Gateway and report capability (no bar persistence)."""
+    """Connect to TWS/Gateway via isolated subprocess (no ib_insync in API worker thread)."""
     cfg = phase9_effective_ib_config()
     client_id = probe_client_id if probe_client_id is not None else cfg["historical_subprocess_client_id"]
-    result: dict[str, Any] = {
+    base: dict[str, Any] = {
         "host": cfg["host"],
         "port": cfg["port"],
         "client_id": client_id,
         "connected": False,
         "server_version": None,
-        "connection_time": None,
         "managed_accounts_masked": [],
         "historical_data_capability": "unknown",
         "client_id_collision_suspected": False,
         "ib_error_codes": [],
         "ib_messages": [],
         "warnings": [],
+        "execution_path": "subprocess",
     }
-    try:
-        from ib_insync import IB, Stock  # type: ignore
-    except ImportError as exc:
-        result["ib_messages"].append(f"ib_insync not available: {exc}")
-        return result
+    _root, py, script = _preflight_subprocess_paths()
+    if not py.exists() or not script.exists():
+        base["ib_messages"].append("IB preflight runtime not found (cursorfiles/.venv or script missing).")
+        base["error_class"] = "IB_RUNTIME_MISSING"
+        return base
 
-    ib = IB()
-    t0 = time.perf_counter()
+    cmd = [
+        str(py),
+        str(script),
+        "--host",
+        str(cfg["host"]),
+        "--port",
+        str(int(cfg["port"])),
+        "--client-id",
+        str(int(client_id)),
+        "--connect-timeout-sec",
+        str(int(cfg.get("connect_timeout_sec") or 15)),
+    ]
+    timeout_sec = int(cfg.get("fetch_timeout_sec") or 90)
     try:
-        ib.connect(
-            host=str(cfg["host"]),
-            port=int(cfg["port"]),
-            clientId=int(client_id),
-            readonly=True,
-            timeout=int(cfg.get("connect_timeout_sec") or 15),
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            cwd=str(_root),
         )
-        result["connected"] = True
-        result["connection_time_sec"] = round(time.perf_counter() - t0, 3)
-        sv = getattr(ib, "serverVersion", None)
-        if callable(sv):
-            result["server_version"] = sv()
-        elif ib.client is not None:
-            csv = getattr(ib.client, "serverVersion", None)
-            result["server_version"] = csv() if callable(csv) else csv
-        elif sv is not None:
-            result["server_version"] = sv
-        accounts = list(ib.managedAccounts() or [])
-        result["managed_accounts_masked"] = _mask_accounts(accounts)
-        result["managed_accounts_count"] = len(accounts)
-        contract = Stock("AAPL", "SMART", "USD")
-        ib.qualifyContracts(contract)
-        result["historical_data_capability"] = "contract_qualified"
-        result["qualified_contract"] = {
-            "symbol": contract.symbol,
-            "secType": contract.secType,
-            "exchange": contract.exchange,
-            "currency": contract.currency,
-            "primaryExchange": getattr(contract, "primaryExchange", None),
-        }
+    except subprocess.TimeoutExpired as exc:
+        base["ib_messages"].append("IB preflight subprocess timed out.")
+        base["error_class"] = "PREFLIGHT_TIMEOUT"
+        base["technical_detail"] = str(exc)
+        return base
     except Exception as exc:
-        msg = str(exc)
-        result["ib_messages"].append(msg)
-        result["error_class"] = type(exc).__name__
-        code_match = re.search(r"error\s*(\d+)", msg, re.I)
-        if code_match:
-            result["ib_error_codes"].append(int(code_match.group(1)))
-        if "326" in msg or "already in use" in msg.lower() or "Peer closed" in msg:
-            result["client_id_collision_suspected"] = True
-        if "502" in msg or "Couldn't connect" in msg:
-            result["connection_refused"] = True
-    finally:
-        if ib.isConnected():
-            ib.disconnect()
-    return result
+        base["ib_messages"].append(str(exc))
+        base["error_class"] = type(exc).__name__
+        return base
+
+    payload = parse_json_payload(proc.stdout or "", proc.stderr or "")
+    if not payload:
+        tail = (proc.stderr or proc.stdout or "")[:500]
+        base["ib_messages"].append(tail or "Empty preflight subprocess output.")
+        base["error_class"] = "PREFLIGHT_PARSE_ERROR"
+        base["exit_code"] = proc.returncode
+        return base
+
+    merged = {**base, **payload}
+    merged.setdefault("managed_accounts_masked", _mask_accounts([]))
+    if payload.get("managed_accounts") and not merged.get("managed_accounts_masked"):
+        merged["managed_accounts_masked"] = _mask_accounts(list(payload.get("managed_accounts") or []))
+    merged.pop("managed_accounts", None)
+    if proc.returncode != 0 and payload.get("status") == "FAIL":
+        merged.setdefault("connected", False)
+    return merged
 
 
 def analyze_session_probe(

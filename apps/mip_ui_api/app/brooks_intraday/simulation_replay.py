@@ -10,6 +10,7 @@ from app.db import get_connection
 
 from .context_repository import load_context_observations
 from .context_ruleset_v02 import RULESET_VERSION as CONTEXT_V02
+from .context_ruleset_v03 import RULESET_VERSION as CONTEXT_V03
 from .errors import BrooksIntradayError
 from .replay_engine import (
     _bars_index,
@@ -29,12 +30,18 @@ from .simulation_engine import (
     record_blocked_entry,
     tie_break_pick,
 )
+from .experiment_progress import (
+    PROGRESS_PHASE_COMPUTE,
+    PROGRESS_PHASE_INTEGRITY,
+    PROGRESS_PHASE_PERSIST,
+    emit_progress,
+)
+from .persist_integrity import fail_simulation_attempt
 from .simulation_repository import (
-    clear_run_simulation_artifacts,
     complete_simulation_attempt,
     create_simulation_attempt,
-    insert_blocked_signal,
-    insert_sim_trade,
+    insert_blocked_signals_batch,
+    insert_sim_trades_batch,
     simulation_sequence_hash,
     verify_context_attempt,
 )
@@ -63,16 +70,28 @@ def run_simulation_replay_bulk(
     *,
     context_attempt_id: str = PHASE6B_CONTEXT,
     progress_every: int = 50,
+    on_progress=None,
+    required_context_ruleset: str | None = None,
+    notes: str | None = None,
 ) -> str:
     verify_replay_ready(state)
     verify_schedule_bars(state)
     run_id = state["run_id"]
     params = resolve_params(state.get("configuration", {}).get("simulation_parameters"))
 
+    # Default remains Freeze-V1 / Phase 7 gate on V0.2. Phase E may pass V0.3 explicitly.
+    required = required_context_ruleset or REQUIRED_CONTEXT_RULESET
+    if required not in (CONTEXT_V02, CONTEXT_V03):
+        raise BrooksIntradayError(
+            "SIMULATION_CONTEXT_RULESET_FORBIDDEN",
+            f"Simulation gating refuses {required}; allowed: {CONTEXT_V02}, {CONTEXT_V03}.",
+            run_id=run_id,
+        )
+
     meta = verify_context_attempt(
         run_id=run_id,
         context_attempt_id=context_attempt_id,
-        required_ruleset=REQUIRED_CONTEXT_RULESET,
+        required_ruleset=required,
     )
     if meta["context_ruleset_version"] == "BROOKS_CONTEXT_RULESET_V0_1":
         raise BrooksIntradayError(
@@ -90,13 +109,18 @@ def run_simulation_replay_bulk(
     starting_cash = float(state.get("starting_cash") or params["starting_cash"])
     portfolio = PortfolioSimState(cash=starting_cash)
 
-    clear_run_simulation_artifacts(run_id)
+    # No run-wide DELETE — isolation via SIMULATION_ATTEMPT_ID on new writes.
+    default_notes = (
+        "Phase E simulation (V0.3 context gating; disposable)"
+        if required == CONTEXT_V03
+        else "Phase 7 pilot week simulation (V0.2 context gating)"
+    )
     sim_attempt_id = create_simulation_attempt(
         run_id=run_id,
         context_attempt_id=context_attempt_id,
         context_ruleset_version=str(meta["context_ruleset_version"]),
         starting_cash=starting_cash,
-        notes="Phase 7 pilot week simulation (V0.2 context gating)",
+        notes=notes or default_notes,
     )
 
     dossiers_cache: dict[str, dict[str, Any]] = {}
@@ -180,6 +204,13 @@ def run_simulation_replay_bulk(
         session_bar_count += 1
         if progress_every and (step_idx + 1) % progress_every == 0:
             print(f"simulation step {step_idx + 1}/{len(schedule)}", flush=True)
+            emit_progress(
+                on_progress,
+                step_idx + 1,
+                phase=PROGRESS_PHASE_COMPUTE,
+                total=len(schedule),
+                unit="schedule_steps",
+            )
 
     # Force-close any open position at week end (final bar close)
     if portfolio.open_position and not portfolio.pending_exit:
@@ -215,24 +246,57 @@ def run_simulation_replay_bulk(
             )
             portfolio.open_position = None
 
-    conn = get_connection()
+    emit_progress(
+        on_progress,
+        len(schedule),
+        phase=PROGRESS_PHASE_COMPUTE,
+        total=len(schedule),
+        unit="schedule_steps",
+    )
     try:
-        for i, trade in enumerate(portfolio.closed_trades, start=1):
-            insert_sim_trade(run_id=run_id, trade=trade, conn=conn, commit=False)
-        open_sym = portfolio.open_position.symbol if portfolio.open_position else None
-        for i, sig in enumerate(portfolio.blocked_signals, start=1):
-            insert_blocked_signal(
+        conn = get_connection()
+        try:
+            open_sym = portfolio.open_position.symbol if portfolio.open_position else None
+            for sig in portfolio.blocked_signals:
+                if not sig.get("active_position_symbol"):
+                    sig["active_position_symbol"] = open_sym
+            trade_n = insert_sim_trades_batch(
                 run_id=run_id,
-                signal=sig,
-                active_position_symbol=sig.get("active_position_symbol") or open_sym,
+                simulation_attempt_id=sim_attempt_id,
+                trades=portfolio.closed_trades,
                 conn=conn,
-                commit=False,
+                commit=True,
             )
-            if i % 200 == 0:
-                conn.commit()
-        conn.commit()
-    finally:
-        conn.close()
+            blocked_n = insert_blocked_signals_batch(
+                run_id=run_id,
+                simulation_attempt_id=sim_attempt_id,
+                signals=portfolio.blocked_signals,
+                conn=conn,
+                commit=True,
+            )
+            emit_progress(
+                on_progress,
+                trade_n + blocked_n,
+                phase=PROGRESS_PHASE_PERSIST,
+                total=max(trade_n + blocked_n, 1),
+                unit="rows",
+            )
+        finally:
+            conn.close()
+
+        emit_progress(on_progress, 0, phase=PROGRESS_PHASE_INTEGRITY, total=1, unit="checks")
+        if trade_n != len(portfolio.closed_trades) or blocked_n != len(portfolio.blocked_signals):
+            raise ValueError(
+                f"SIM count mismatch trades={trade_n}/{len(portfolio.closed_trades)} "
+                f"blocked={blocked_n}/{len(portfolio.blocked_signals)}"
+            )
+        emit_progress(on_progress, 1, phase=PROGRESS_PHASE_INTEGRITY, total=1, unit="checks")
+    except Exception as exc:
+        fail_simulation_attempt(
+            simulation_attempt_id=sim_attempt_id,
+            notes=f"phase_c_fail:{type(exc).__name__}:{exc}",
+        )
+        raise
 
     seq = simulation_sequence_hash(portfolio.closed_trades, portfolio.blocked_signals)
     complete_simulation_attempt(
@@ -244,22 +308,40 @@ def run_simulation_replay_bulk(
         sequence_hash=seq,
     )
 
-    state["current_cash"] = portfolio.cash
-    state["realized_pnl"] = portfolio.realized_pnl
-    state["open_position_symbol"] = None
-    state["open_position_qty"] = None
-    state["phase7_simulation_attempt_id"] = sim_attempt_id
     cfg = state.setdefault("configuration", {})
-    cfg["phase7_simulation_attempt_id"] = sim_attempt_id
-    cfg["phase6b_context_attempt_id"] = context_attempt_id
-    cfg["context_ruleset_version"] = CONTEXT_V02
-    cfg["simulation_ruleset_version"] = params["ruleset_version"]
-    cfg["simulation_summary"] = {
+    summary = {
         "trade_count": len(portfolio.closed_trades),
         "blocked_signal_count": len(portfolio.blocked_signals),
         "ending_cash": portfolio.cash,
         "realized_pnl": portfolio.realized_pnl,
         "sequence_hash": seq,
+        "context_attempt_id": context_attempt_id,
+        "context_ruleset_version": str(meta["context_ruleset_version"]),
+        "simulation_attempt_id": sim_attempt_id,
     }
+    if required == CONTEXT_V03:
+        # Disposable Phase E / E1 — do not overwrite Freeze V1 cash or phase6b / phase7 pins.
+        note_text = str(notes or cfg.get("simulation_replay_notes") or "")
+        if "Phase E1" in note_text:
+            state["phase_e1_simulation_v03_attempt_id"] = sim_attempt_id
+            cfg["phase_e1_simulation_v03_attempt_id"] = sim_attempt_id
+            cfg["phase_e1_context_v03_attempt_id"] = context_attempt_id
+            cfg["phase_e1_simulation_v03_summary"] = summary
+        else:
+            state["phase_e_simulation_v03_attempt_id"] = sim_attempt_id
+            cfg["phase_e_simulation_v03_attempt_id"] = sim_attempt_id
+            cfg["phase_e_context_v03_attempt_id"] = context_attempt_id
+            cfg["phase_e_simulation_v03_summary"] = summary
+    else:
+        state["current_cash"] = portfolio.cash
+        state["realized_pnl"] = portfolio.realized_pnl
+        state["open_position_symbol"] = None
+        state["open_position_qty"] = None
+        state["phase7_simulation_attempt_id"] = sim_attempt_id
+        cfg["phase7_simulation_attempt_id"] = sim_attempt_id
+        cfg["phase6b_context_attempt_id"] = context_attempt_id
+        cfg["context_ruleset_version"] = CONTEXT_V02
+        cfg["simulation_ruleset_version"] = params["ruleset_version"]
+        cfg["simulation_summary"] = summary
 
     return sim_attempt_id

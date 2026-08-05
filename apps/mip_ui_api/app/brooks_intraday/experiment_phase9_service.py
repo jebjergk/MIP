@@ -46,6 +46,13 @@ def worker_owner_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+def ensure_phase9_worker_started() -> None:
+    """Start Brooks validation worker on demand (not on every MIP API boot)."""
+    from .experiment_phase9_worker import start_phase9_worker
+
+    start_phase9_worker()
+
+
 def ensure_execution_record() -> dict[str, Any]:
     ex = get_active_execution()
     if ex:
@@ -83,7 +90,14 @@ def ensure_execution_record() -> dict[str, Any]:
     return ex
 
 
-def _week_card(execution_id: str, week_start: date, progress: dict) -> dict[str, Any]:
+def _week_card(
+    execution_id: str,
+    week_start: date,
+    progress: dict,
+    *,
+    current_week_start: str | None = None,
+    overall_status: str | None = None,
+) -> dict[str, Any]:
     wk = week_start.isoformat()
     week_cal = resolve_week_sessions(week_start)
     week_end = week_cal.trading_dates[-1].isoformat() if week_cal.trading_dates else wk
@@ -102,6 +116,12 @@ def _week_card(execution_id: str, week_start: date, progress: dict) -> dict[str,
     ending_cash = None
     week_status = "NOT_CREATED"
     latest_error = None
+    bars_prog = progress.get("bars") or {}
+    is_active_week = bool(current_week_start and str(current_week_start)[:10] == wk)
+
+    # Authoritative acquisition progress from execution.progress_json.bars
+    if is_active_week and bars_prog.get("complete") is not None:
+        bar_complete = int(bars_prog.get("complete") or 0)
 
     if meta.get("status") == STAGE_WEEK_COMPLETE or done:
         week_status = STAGE_WEEK_COMPLETE
@@ -114,7 +134,8 @@ def _week_card(execution_id: str, week_start: date, progress: dict) -> dict[str,
             with store._lock:
                 st = store._runs[run_id]
             counts = (st.get("preparation") or {}).get("counts") or {}
-            bar_complete = int(counts.get("bar_sessions_complete") or 0)
+            if not bar_complete:
+                bar_complete = int(counts.get("bar_sessions_complete") or 0)
             dossier_complete = int(counts.get("dossiers_compiled") or 0)
             cfg = st.get("configuration") or {}
             obj_id = st.get("phase4_review_baseline_attempt_id") or cfg.get("phase4_review_baseline_attempt_id")
@@ -137,6 +158,12 @@ def _week_card(execution_id: str, week_start: date, progress: dict) -> dict[str,
                 week_status = "SIMULATION_COMPLETE"
         except Exception:
             week_status = "CREATED"
+    elif is_active_week and bar_complete > 0:
+        # Partial acquisition before run_id is written into week meta
+        if overall_status == OVERALL_PAUSED:
+            week_status = "PAUSED"
+        else:
+            week_status = "ACQUIRING_BARS"
 
     if done or meta.get("status") == STAGE_WEEK_COMPLETE:
         week_status = STAGE_WEEK_COMPLETE
@@ -166,10 +193,19 @@ def _week_card(execution_id: str, week_start: date, progress: dict) -> dict[str,
     ):
         if stage_map.get(sk, {}).get("stage_status") == "RUNNING":
             current_stage = sk
+    if is_active_week and not current_stage and week_status in ("PAUSED", "ACQUIRING_BARS"):
+        current_stage = "WEEK_ACQUISITION"
 
     err_stage = next((s for s in stages if s.get("stage_status") == "FAILED"), None)
     if err_stage:
         latest_error = err_stage.get("error_json")
+
+    current_session = None
+    if is_active_week and bars_prog.get("current_symbol"):
+        current_session = {
+            "symbol": bars_prog.get("current_symbol"),
+            "trading_date": bars_prog.get("current_trading_date"),
+        }
 
     return {
         "week_start": wk,
@@ -178,9 +214,10 @@ def _week_card(execution_id: str, week_start: date, progress: dict) -> dict[str,
         "run_id": run_id,
         "week_status": week_status,
         "bar_sessions_complete": bar_complete,
-        "bar_sessions_expected": 20,
+        "bar_sessions_expected": int(bars_prog.get("total") or 20) if is_active_week else 20,
         "dossiers_complete": dossier_complete,
         "dossiers_expected": 20,
+        "current_session": current_session,
         "objective_attempt_id": obj_id,
         "pattern_attempt_id": pat_id,
         "context_attempt_id": ctx_id,
@@ -229,8 +266,26 @@ def build_phase9_status() -> dict[str, Any]:
             bars_label = f"Bars: {bars_prog.get('complete')}/20 sessions complete"
 
     events_payload = get_phase9_events(limit=80)
+    current_week = str(ex.get("current_week_start") or "")[:10] or None
 
-    week_cards = [_week_card(ex["execution_id"], ws, progress) for ws in COHORT_WEEKS]
+    week_cards = [
+        _week_card(
+            ex["execution_id"],
+            ws,
+            progress,
+            current_week_start=current_week,
+            overall_status=ex.get("overall_status"),
+        )
+        for ws in COHORT_WEEKS
+    ]
+    stage_prog = progress.get("stage_progress") or None
+    stage_label = None
+    if stage_prog and stage_prog.get("total"):
+        stage_label = (
+            f"{str(stage_prog.get('stage') or ex.get('current_stage') or 'STAGE').replace('_', ' ').title()}: "
+            f"{stage_prog.get('completed', 0):,} / {stage_prog.get('total', 0):,} "
+            f"{stage_prog.get('unit') or 'observations'}"
+        )
 
     aggregate = None
     comparison = None
@@ -253,17 +308,20 @@ def build_phase9_status() -> dict[str, Any]:
         "weeks_completed_count": weeks_complete,
         "total_weeks": len(COHORT_WEEKS),
         "weeks_total": len(COHORT_WEEKS),
-        "current_active_week": str(ex.get("current_week_start") or "")[:10] or None,
-        "current_week_start": str(ex.get("current_week_start") or "")[:10] or None,
+        "current_active_week": current_week,
+        "current_week_start": current_week,
         "current_stage": ex.get("current_stage"),
+        "stage_progress": stage_prog,
         "progress": {
             "bars_complete": bars_prog.get("complete"),
             "bars_total": bars_prog.get("total") or 20,
             "current_symbol": bars_prog.get("current_symbol"),
             "current_trading_date": bars_prog.get("current_trading_date"),
             "retry_count": bars_prog.get("retry_count"),
-            "label": bars_label or (ex.get("current_stage") or "").replace("_", " ").title() or None,
+            "label": stage_label or bars_label or (ex.get("current_stage") or "").replace("_", " ").title() or None,
+            "stage_progress": stage_prog,
         },
+        "heartbeat_at": str(ex.get("heartbeat_at") or "")[:19] or None,
         "tws": tws,
         "last_successful_action": ex.get("last_success_action"),
         "last_success_action": ex.get("last_success_action"),
@@ -289,10 +347,27 @@ def build_phase9_status() -> dict[str, Any]:
         "comparison": comparison,
         "comparison_summary": comparison,
         "phase9_complete": weeks_complete >= len(COHORT_WEEKS),
+        "brooks_persist_mode": _active_persist_mode(),
         "ui_links": {
             "comparison": "/research/brooks-intraday#phase9-comparison",
             "aggregate": "/research/brooks-intraday#phase9-aggregate",
         },
+    }
+
+
+def _active_persist_mode() -> dict[str, Any]:
+    """Runtime-loaded persist mode (process env), not inferred from static config alone."""
+    import os
+
+    from .persist_mode import ENV_PERSIST_MODE, PERSIST_MODE_LEGACY, get_persist_mode
+
+    active = get_persist_mode()
+    return {
+        "active": active,
+        "env_var": ENV_PERSIST_MODE,
+        "env_value": os.environ.get(ENV_PERSIST_MODE),
+        "code_default": PERSIST_MODE_LEGACY,
+        "scope": "brooks_intraday_lab_only",
     }
 
 
@@ -312,6 +387,7 @@ def _queue_action(action: str, *, run_all: bool = False) -> dict[str, Any]:
         return {"ok": True, "execution_id": eid}
 
     if action in (ACTION_RUN_NEXT, ACTION_RUN_REMAINING, ACTION_RESUME, ACTION_RETRY):
+        ensure_phase9_worker_started()
         pending = _next_pending_week(ex.get("progress_json") or {})
         if action == ACTION_RUN_NEXT and not pending:
             return {"ok": False, "message": "No pending validation weeks"}
@@ -323,7 +399,7 @@ def _queue_action(action: str, *, run_all: bool = False) -> dict[str, Any]:
         }
         if action == ACTION_RUN_REMAINING:
             fields["run_all_remaining"] = True
-        if action == ACTION_RETRY and ex.get("overall_status") == OVERALL_WAITING_FOR_TWS:
+        if action == ACTION_RETRY and ex.get("overall_status") == OVERALL_WAITING_TWS:
             fields["overall_status"] = OVERALL_RUNNING
         if pending and not ex.get("current_week_start"):
             fields["current_week_start"] = pending
@@ -353,18 +429,32 @@ def startup_recovery() -> dict[str, Any]:
 
 
 def post_check_tws() -> dict[str, Any]:
-    ex = ensure_execution_record()
+    try:
+        ex = ensure_execution_record()
+    except Exception as exc:
+        tws = check_tws_connection()
+        tws["message"] = f"Execution record unavailable: {exc}"
+        tws["technical_detail"] = type(exc).__name__
+        tws["recoverable"] = True
+        return {"tws": tws, "status": None, "ok": False}
+
     tws = check_tws_connection()
-    update_execution(ex["execution_id"], tws_state_json=tws)
-    if tws.get("readiness") == "CONNECTED_AND_READY":
-        append_event(ex["execution_id"], "TWS connection successful", severity="INFO")
-        if ex.get("overall_status") == OVERALL_WAITING_FOR_TWS:
-            update_execution(
-                ex["execution_id"],
-                overall_status=OVERALL_PAUSED,
-                next_automatic_action="Use Resume current week to continue",
-            )
-    return {"tws": tws, "status": build_phase9_status()}
+    try:
+        update_execution(ex["execution_id"], tws_state_json=tws)
+        if tws.get("readiness") == "CONNECTED_AND_READY":
+            append_event(ex["execution_id"], "TWS connection successful", severity="INFO")
+            if ex.get("overall_status") == OVERALL_WAITING_TWS:
+                update_execution(
+                    ex["execution_id"],
+                    overall_status=OVERALL_PAUSED,
+                    next_automatic_action="Use Resume current week to continue",
+                )
+    except Exception as exc:
+        tws.setdefault("ib_messages", []).append(f"Persist failed: {exc}")
+        tws["technical_detail"] = type(exc).__name__
+        tws["recoverable"] = True
+
+    return {"tws": tws, "status": build_phase9_status(), "ok": tws.get("readiness") == "CONNECTED_AND_READY"}
 
 
 def request_run_next() -> dict[str, Any]:
@@ -406,11 +496,15 @@ def get_phase9_events(limit: int = 80) -> dict[str, Any]:
     for ev in events:
         ts = ev.get("event_ts")
         if isinstance(ts, datetime):
-            ts_s = ts.strftime("%H:%M")
+            ts_utc = ts.strftime("%Y-%m-%dT%H:%M:%S")
+            ts_s = ts.strftime("%H:%M:%S")
         else:
-            ts_s = str(ts)[11:16] if ts else ""
+            raw = str(ts or "")
+            ts_utc = raw[:19].replace(" ", "T") if raw else None
+            ts_s = raw[11:19] if len(raw) >= 19 else (raw[11:16] if raw else "")
         formatted.append(
             {
+                "event_timestamp_utc": ts_utc,
                 "time": ts_s,
                 "severity": ev.get("severity"),
                 "stage": ev.get("stage"),
@@ -421,4 +515,5 @@ def get_phase9_events(limit: int = 80) -> dict[str, Any]:
                 "recoverable": ev.get("recoverable"),
             }
         )
+    formatted.sort(key=lambda e: (e.get("event_timestamp_utc") or "", e.get("message") or ""))
     return {"execution_id": ex["execution_id"], "events": formatted}

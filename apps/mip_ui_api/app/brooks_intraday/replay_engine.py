@@ -15,6 +15,7 @@ from .observation_repository import (
     count_completed_steps_from_observations,
     count_observations,
     insert_objective_observation,
+    insert_objective_observations_batch,
     load_baseline_observation_index,
     load_observation_at_bar,
     observation_sequence_hash,
@@ -26,9 +27,25 @@ from .pattern_repository import (
     count_completed_pattern_slices,
     count_pattern_instances,
     insert_bar_pattern_link,
+    insert_bar_pattern_links_batch,
+    insert_pattern_instances_batch,
     pattern_sequence_hash,
     slice_pattern_link_count,
     upsert_pattern_instance,
+)
+from .persist_integrity import (
+    assert_schedule_keys_match,
+    fail_replay_attempt,
+    load_bar_link_keys,
+    load_observation_keys,
+    schedule_key_set,
+)
+from .persist_mode import is_bulk_persist
+from .experiment_progress import (
+    PROGRESS_PHASE_COMPUTE,
+    PROGRESS_PHASE_INTEGRITY,
+    PROGRESS_PHASE_PERSIST,
+    emit_progress,
 )
 from app.db import get_connection
 from .pattern_engine_v02 import advance_patterns_v02_for_bar
@@ -449,6 +466,7 @@ def run_pattern_replay_bulk(
     *,
     progress_every: int = 50,
     commit_every: int = 20,  # noqa: ARG001 — kept for API compatibility
+    on_progress: Any | None = None,
 ) -> str:
     """
     Run a full pattern ruleset replay with batched Snowflake writes.
@@ -547,43 +565,127 @@ def run_pattern_replay_bulk(
         if progress_every and completed % progress_every == 0:
             logger.info("bulk pattern replay step %s/%s attempt=%s", completed, len(schedule), attempt_id)
             print(f"step {completed}", flush=True)
+            emit_progress(
+                on_progress,
+                completed,
+                phase=PROGRESS_PHASE_COMPUTE,
+                total=len(schedule),
+                unit="schedule_steps",
+            )
 
-    conn = get_connection()
+    emit_progress(
+        on_progress,
+        len(schedule),
+        phase=PROGRESS_PHASE_COMPUTE,
+        total=len(schedule),
+        unit="schedule_steps",
+    )
+
+    expected_keys = schedule_key_set(schedule, symbols, normalize_utc=_normalize_utc)
+    expected_instance_count = len(pending_patterns)
+    persist_units = expected_instance_count + len(pending_links)
     try:
-        for i, (sym, pat) in enumerate(pending_patterns.values(), start=1):
-            upsert_pattern_instance(
-                run_id=state["run_id"],
-                replay_attempt_id=attempt_id,
-                symbol=sym,
-                pat=pat,
-                pattern_ruleset_version=rs,
-                conn=conn,
-                commit=False,
-            )
-            if i % 200 == 0:
+        conn = get_connection()
+        try:
+            if is_bulk_persist():
+                written = 0
+                pat_rows = list(pending_patterns.values())
+                written += insert_pattern_instances_batch(
+                    pat_rows,
+                    run_id=state["run_id"],
+                    replay_attempt_id=attempt_id,
+                    pattern_ruleset_version=rs,
+                    conn=conn,
+                    commit=True,
+                    chunk_size=500,
+                )
+                emit_progress(
+                    on_progress,
+                    written,
+                    phase=PROGRESS_PHASE_PERSIST,
+                    total=max(persist_units, 1),
+                    unit="rows",
+                )
+                written += insert_bar_pattern_links_batch(
+                    pending_links,
+                    run_id=state["run_id"],
+                    replay_attempt_id=attempt_id,
+                    conn=conn,
+                    commit=True,
+                    chunk_size=500,
+                )
+                emit_progress(
+                    on_progress,
+                    written,
+                    phase=PROGRESS_PHASE_PERSIST,
+                    total=max(persist_units, 1),
+                    unit="rows",
+                )
+            else:
+                for i, (sym, pat) in enumerate(pending_patterns.values(), start=1):
+                    upsert_pattern_instance(
+                        run_id=state["run_id"],
+                        replay_attempt_id=attempt_id,
+                        symbol=sym,
+                        pat=pat,
+                        pattern_ruleset_version=rs,
+                        conn=conn,
+                        commit=False,
+                    )
+                    if i % 200 == 0:
+                        conn.commit()
+                        emit_progress(
+                            on_progress,
+                            i,
+                            phase=PROGRESS_PHASE_PERSIST,
+                            total=max(persist_units, 1),
+                            unit="rows",
+                        )
+                for i, link in enumerate(pending_links, start=1):
+                    insert_bar_pattern_link(
+                        run_id=state["run_id"],
+                        replay_attempt_id=attempt_id,
+                        symbol=link["symbol"],
+                        trading_date=link["trading_date"],
+                        bar_ts_utc=link["bar_ts_utc"],
+                        active_pattern_ids=link["active_pattern_ids"],
+                        pattern_snapshot=link["pattern_snapshot"],
+                        action=link["action"],
+                        explanation=link["explanation"],
+                        conn=conn,
+                        commit=False,
+                    )
+                    if i % 400 == 0:
+                        conn.commit()
+                        emit_progress(
+                            on_progress,
+                            expected_instance_count + i,
+                            phase=PROGRESS_PHASE_PERSIST,
+                            total=max(persist_units, 1),
+                            unit="rows",
+                        )
                 conn.commit()
-                print(f"flushed patterns {i}/{len(pending_patterns)}", flush=True)
-        for i, link in enumerate(pending_links, start=1):
-            insert_bar_pattern_link(
-                run_id=state["run_id"],
-                replay_attempt_id=attempt_id,
-                symbol=link["symbol"],
-                trading_date=link["trading_date"],
-                bar_ts_utc=link["bar_ts_utc"],
-                active_pattern_ids=link["active_pattern_ids"],
-                pattern_snapshot=link["pattern_snapshot"],
-                action=link["action"],
-                explanation=link["explanation"],
-                conn=conn,
-                commit=False,
+            print(f"persisted {len(pending_patterns)} patterns and {len(pending_links)} bar links", flush=True)
+        finally:
+            conn.close()
+
+        emit_progress(on_progress, 0, phase=PROGRESS_PHASE_INTEGRITY, total=2, unit="checks")
+        persisted_links = load_bar_link_keys(state["run_id"], replay_attempt_id=attempt_id)
+        assert_schedule_keys_match(
+            expected=expected_keys, persisted=persisted_links, label="BAR_PATTERN_LINK"
+        )
+        actual_instances = count_pattern_instances(state["run_id"], replay_attempt_id=attempt_id)
+        if actual_instances != expected_instance_count:
+            raise ValueError(
+                f"PATTERN_INSTANCE count mismatch: expected={expected_instance_count} actual={actual_instances}"
             )
-            if i % 400 == 0:
-                conn.commit()
-                print(f"flushed links {i}/{len(pending_links)}", flush=True)
-        conn.commit()
-        print(f"persisted {len(pending_patterns)} patterns and {len(pending_links)} bar links", flush=True)
-    finally:
-        conn.close()
+        emit_progress(on_progress, 2, phase=PROGRESS_PHASE_INTEGRITY, total=2, unit="checks")
+    except Exception as exc:
+        fail_replay_attempt(
+            attempt_id=attempt_id,
+            notes=f"phase_c_fail:{type(exc).__name__}:{exc}; rows_written=partial; expected_links={len(expected_keys)}",
+        )
+        raise
 
     cursor.update(
         {
@@ -602,7 +704,7 @@ def run_pattern_replay_bulk(
     seq_hash = pattern_sequence_hash(state["run_id"], replay_attempt_id=attempt_id)
     complete_replay_attempt(
         attempt_id=attempt_id,
-        observation_count=count_pattern_instances(state["run_id"], replay_attempt_id=attempt_id),
+        observation_count=actual_instances,
         sequence_hash=seq_hash,
     )
     state["active_replay_attempt_id"] = attempt_id
@@ -622,6 +724,7 @@ def run_objective_replay_bulk(
     *,
     progress_every: int = 50,
     commit_every: int = 400,
+    on_progress: Any | None = None,
 ) -> str:
     """Full-week objective observation replay with batched persistence."""
     verify_replay_ready(state)
@@ -687,28 +790,98 @@ def run_objective_replay_bulk(
             )
         if progress_every and (step_idx + 1) % progress_every == 0:
             print(f"objective step {step_idx + 1}/{len(schedule)}", flush=True)
-
-    conn = get_connection()
-    try:
-        for i, (sym, td, ts, seq, ohlcv, obs_payload) in enumerate(pending, start=1):
-            insert_objective_observation(
-                run_id=state["run_id"],
-                replay_attempt_id=attempt_id,
-                symbol=sym,
-                trading_date=td,
-                bar_ts_utc=ts,
-                sequence_num=seq,
-                ohlcv=ohlcv,
-                payload=obs_payload,
-                conn=conn,
-                commit=False,
+            emit_progress(
+                on_progress,
+                len(pending),
+                phase=PROGRESS_PHASE_COMPUTE,
+                total=len(schedule) * len(symbols),
+                unit="observations",
             )
-            if commit_every and i % commit_every == 0:
+
+    emit_progress(
+        on_progress,
+        len(pending),
+        phase=PROGRESS_PHASE_COMPUTE,
+        total=len(pending),
+        unit="observations",
+    )
+
+    expected_keys = schedule_key_set(schedule, symbols, normalize_utc=_normalize_utc)
+    try:
+        conn = get_connection()
+        try:
+            if is_bulk_persist():
+                batch_rows = [
+                    {
+                        "run_id": state["run_id"],
+                        "replay_attempt_id": attempt_id,
+                        "symbol": sym,
+                        "trading_date": td,
+                        "bar_ts_utc": ts,
+                        "sequence_num": seq,
+                        "ohlcv": ohlcv,
+                        "payload": obs_payload,
+                    }
+                    for sym, td, ts, seq, ohlcv, obs_payload in pending
+                ]
+                written = 0
+                for i in range(0, len(batch_rows), 500):
+                    chunk = batch_rows[i : i + 500]
+                    written += insert_objective_observations_batch(
+                        chunk, conn=conn, commit=True, chunk_size=500
+                    )
+                    emit_progress(
+                        on_progress,
+                        written,
+                        phase=PROGRESS_PHASE_PERSIST,
+                        total=len(batch_rows),
+                        unit="rows",
+                    )
+            else:
+                for i, (sym, td, ts, seq, ohlcv, obs_payload) in enumerate(pending, start=1):
+                    insert_objective_observation(
+                        run_id=state["run_id"],
+                        replay_attempt_id=attempt_id,
+                        symbol=sym,
+                        trading_date=td,
+                        bar_ts_utc=ts,
+                        sequence_num=seq,
+                        ohlcv=ohlcv,
+                        payload=obs_payload,
+                        conn=conn,
+                        commit=False,
+                    )
+                    if commit_every and i % commit_every == 0:
+                        conn.commit()
+                        print(f"flushed objective rows {i}/{len(pending)}", flush=True)
+                        emit_progress(
+                            on_progress,
+                            i,
+                            phase=PROGRESS_PHASE_PERSIST,
+                            total=len(pending),
+                            unit="rows",
+                        )
                 conn.commit()
-                print(f"flushed objective rows {i}/{len(pending)}", flush=True)
-        conn.commit()
-    finally:
-        conn.close()
+                emit_progress(
+                    on_progress,
+                    len(pending),
+                    phase=PROGRESS_PHASE_PERSIST,
+                    total=len(pending),
+                    unit="rows",
+                )
+        finally:
+            conn.close()
+
+        emit_progress(on_progress, 0, phase=PROGRESS_PHASE_INTEGRITY, total=1, unit="checks")
+        persisted = load_observation_keys(state["run_id"], replay_attempt_id=attempt_id)
+        assert_schedule_keys_match(expected=expected_keys, persisted=persisted, label="BAR_OBSERVATION")
+        emit_progress(on_progress, 1, phase=PROGRESS_PHASE_INTEGRITY, total=1, unit="checks")
+    except Exception as exc:
+        fail_replay_attempt(
+            attempt_id=attempt_id,
+            notes=f"phase_c_fail:{type(exc).__name__}:{exc}; expected={len(expected_keys)}",
+        )
+        raise
 
     cursor.update(
         {

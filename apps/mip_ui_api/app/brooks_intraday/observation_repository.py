@@ -337,6 +337,85 @@ def _merge_params(
     return head + vals + vals
 
 
+def insert_objective_observations_batch(
+    rows: list[dict[str, Any]],
+    *,
+    conn: Any | None = None,
+    commit: bool = True,
+    chunk_size: int = 500,
+) -> int:
+    """Bulk INSERT (no MERGE). Used when BROOKS_PERSIST_MODE=bulk."""
+    from .persist_batch import execute_insert_select_from_values
+
+    if not rows:
+        return 0
+    own = conn is None
+    if own:
+        conn = get_connection()
+    written = 0
+    table = """MIP.APP.BROOKS_INTRADAY_BAR_OBSERVATION (
+            RUN_ID, REPLAY_ATTEMPT_ID, SYMBOL, TRADING_DATE, BAR_TS, SEQUENCE_NUM,
+            OHLCV_JSON, OBJECTIVE_FACTS_JSON, DERIVED_METRICS_JSON, BROOKS_OBS_JSON,
+            RULE_EVALUATIONS_JSON, RULESET_VERSION, VISIBLE_HISTORY_COUNT,
+            PATTERN_STATE_JSON, CONTEXT_JSON, STATE_BEFORE, STATE_AFTER,
+            ACTION, BLOCKERS_JSON, EXPLANATION, RULE_IDS, DATA_QUALITY_STATUS
+        )"""
+    select_list = """
+            column1, column2, column3, column4, column5, column6,
+            PARSE_JSON(column7), PARSE_JSON(column8), PARSE_JSON(column9), PARSE_JSON(column10),
+            PARSE_JSON(column11), column12, column13,
+            PARSE_JSON(column14), PARSE_JSON(column15), column16, column17,
+            column18, PARSE_JSON(column19), column20, PARSE_JSON(column21), column22
+    """
+    try:
+        cur = conn.cursor()
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            params = []
+            for r in chunk:
+                payload = r["payload"]
+                ohlcv = r["ohlcv"]
+                params.append(
+                    (
+                        r["run_id"],
+                        r["replay_attempt_id"],
+                        str(r["symbol"]).upper(),
+                        r["trading_date"],
+                        r["bar_ts_utc"],
+                        r["sequence_num"],
+                        json.dumps(ohlcv),
+                        json.dumps(payload["objective_facts_json"]),
+                        json.dumps(payload["derived_metrics_json"]),
+                        json.dumps(payload["brooks_obs_json"]),
+                        json.dumps(payload["rule_evaluations_json"]),
+                        payload["ruleset_version"],
+                        payload["visible_history_count"],
+                        json.dumps(payload["pattern_state_json"]),
+                        json.dumps(payload["context_json"]),
+                        payload["state_before"],
+                        payload["state_after"],
+                        payload["action"],
+                        json.dumps(payload["blockers_json"]),
+                        payload["explanation"],
+                        json.dumps(payload["rule_ids"]),
+                        payload["data_quality_status"],
+                    )
+                )
+            execute_insert_select_from_values(
+                cur,
+                table_and_columns=table,
+                select_list_sql=select_list,
+                row_params=params,
+            )
+            written += len(chunk)
+            if commit:
+                conn.commit()
+        return written
+    finally:
+        if own:
+            conn.close()
+
+
 def observation_sequence_hash(run_id: str, *, replay_attempt_id: str) -> str:
     conn = get_connection()
     try:

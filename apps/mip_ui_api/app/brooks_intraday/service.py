@@ -182,8 +182,10 @@ def get_context_observations(run_id: str, symbol: str) -> dict:
 def get_trades(run_id: str) -> TradesPage:
     from .simulation_repository import load_sim_trades
 
-    get_run_or_404(run_id)
-    rows = load_sim_trades(run_id)
+    run = get_run_or_404(run_id)
+    cfg = run.configuration or {}
+    sim_id = cfg.get("phase7_simulation_attempt_id")
+    rows = load_sim_trades(run_id, simulation_attempt_id=sim_id)
     return TradesPage(run_id=run_id, trades=rows)
 
 

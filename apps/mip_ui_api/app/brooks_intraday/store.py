@@ -486,7 +486,7 @@ def run_context_bulk(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "context_attempt_id": result_holder["context_attempt_id"]}
 
 
-def run_context_bulk_v02(run_id: str) -> dict[str, Any]:
+def run_context_bulk_v02(run_id: str, *, on_progress=None) -> dict[str, Any]:
     from .context_replay import run_context_replay_bulk
     from .context_ruleset_v02 import RULESET_VERSION as RULESET_V02
 
@@ -496,11 +496,40 @@ def run_context_bulk_v02(run_id: str) -> dict[str, Any]:
     def _apply(state: dict[str, Any]) -> None:
         _wire_context_prerequisites(state)
         result_holder["context_attempt_id"] = run_context_replay_bulk(
-            state, ruleset_version=RULESET_V02, notes="Phase 6B V0.2 calibrated context replay"
+            state,
+            ruleset_version=RULESET_V02,
+            notes="Phase 6B V0.2 calibrated context replay",
+            on_progress=on_progress,
         )
 
     _mutate_run(run_id, _apply)
     return {"run_id": run_id, "context_attempt_id": result_holder["context_attempt_id"], "ruleset_version": RULESET_V02}
+
+
+def run_context_bulk_v03(run_id: str, *, on_progress=None, notes: str | None = None) -> dict[str, Any]:
+    """Disposable V0.3 context replay. Does not change Freeze V1 pins or default ruleset."""
+    from .context_replay import run_context_replay_bulk
+    from .context_ruleset_v03 import RULESET_VERSION as RULESET_V03
+
+    get_run(run_id)
+    result_holder: dict[str, Any] = {}
+
+    def _apply(state: dict[str, Any]) -> None:
+        _wire_context_prerequisites(state)
+        result_holder["context_attempt_id"] = run_context_replay_bulk(
+            state,
+            ruleset_version=RULESET_V03,
+            notes=notes or "Phase E V0.3 context replay (disposable; not Freeze V1 pin)",
+            on_progress=on_progress,
+        )
+
+    _mutate_run(run_id, _apply)
+    return {
+        "run_id": run_id,
+        "context_attempt_id": result_holder["context_attempt_id"],
+        "ruleset_version": RULESET_V03,
+        "pinned_to_run_config": False,
+    }
 
 
 def _wire_context_prerequisites(state: dict[str, Any]) -> None:
@@ -520,6 +549,9 @@ def run_simulation_bulk(
     run_id: str,
     *,
     context_attempt_id: str = "63ecc779-3dbb-4468-8bc1-a8bbd0f17342",
+    required_context_ruleset: str | None = None,
+    notes: str | None = None,
+    pin_context_to_run_config: bool = True,
 ) -> dict[str, Any]:
     from .simulation_replay import run_simulation_replay_bulk
 
@@ -528,11 +560,24 @@ def run_simulation_bulk(
 
     def _apply(state: dict[str, Any]) -> None:
         _wire_context_prerequisites(state)
-        state.setdefault("configuration", {})["phase6b_context_attempt_id"] = context_attempt_id
+        if pin_context_to_run_config:
+            state.setdefault("configuration", {})["phase6b_context_attempt_id"] = context_attempt_id
         result_holder["simulation_attempt_id"] = run_simulation_replay_bulk(
-            state, context_attempt_id=context_attempt_id
+            state,
+            context_attempt_id=context_attempt_id,
+            required_context_ruleset=required_context_ruleset,
+            notes=notes,
         )
-        result_holder["summary"] = dict(state.get("configuration", {}).get("simulation_summary") or {})
+        cfg = state.get("configuration") or {}
+        from .context_ruleset_v03 import RULESET_VERSION as _V03
+
+        if required_context_ruleset == _V03:
+            if notes and "Phase E1" in notes:
+                result_holder["summary"] = dict(cfg.get("phase_e1_simulation_v03_summary") or {})
+            else:
+                result_holder["summary"] = dict(cfg.get("phase_e_simulation_v03_summary") or {})
+        else:
+            result_holder["summary"] = dict(cfg.get("simulation_summary") or {})
 
     _mutate_run(run_id, _apply)
     summary = result_holder.get("summary") or {}
@@ -669,6 +714,19 @@ def list_rulesets() -> list[dict[str, str]]:
             "parameters": __import__(
                 "app.brooks_intraday.context_ruleset_v02", fromlist=["DEFAULT_PARAMETERS"]
             ).DEFAULT_PARAMETERS,
+        },
+        {
+            "ruleset_version": "BROOKS_CONTEXT_RULESET_V0_3",
+            "description": (
+                "Phase D intraday upgrade path for NO_CLEAR_LONG (inactive by default; "
+                "not Freeze V1). Entry cutoff bar index 72 = 15:30 ET."
+            ),
+            "tie_break_version": TIE_BREAK_VERSION_DEFAULT,
+            "phase": "d_context_v03_synthetic",
+            "parameters": __import__(
+                "app.brooks_intraday.context_ruleset_v03", fromlist=["DEFAULT_PARAMETERS"]
+            ).DEFAULT_PARAMETERS,
+            "active_by_default": False,
         },
         {
             "ruleset_version": "BROOKS_CONTEXT_RULESET_V0_1",

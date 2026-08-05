@@ -11,6 +11,7 @@ from app.db import get_connection
 from .context_phase6b_audit import action_event_and_duration, ui_locator
 from .context_repository import load_context_observations
 from .context_ruleset_v01 import ACTION_CONSIDER_ENTRY, ACTION_ENTRY_ARMED
+from .dossier_access import unwrap_dossier
 from .experiment_freeze import FREEZE_ID
 from .historical_bar_repository import load_bars_from_store
 from .observation_repository import count_observations, review_summary
@@ -89,10 +90,19 @@ def classify_no_trade_week(context_rows: list[dict[str, Any]], dossiers: list[di
     }
 
 
-def build_trade_reviews(run_id: str, week_start: str) -> list[dict[str, Any]]:
-    trades = load_sim_trades(run_id)
+def build_trade_reviews(
+    run_id: str,
+    week_start: str,
+    *,
+    simulation_attempt_id: str | None = None,
+    context_attempt_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build trade review rows. Optional attempt ids are review-only overrides (no pin writes)."""
+    cfg = _run_config(run_id)
+    sim_id = simulation_attempt_id or cfg.get("phase7_simulation_attempt_id")
+    trades = load_sim_trades(run_id, simulation_attempt_id=sim_id)
     dossiers = {f"{d.get('symbol')}|{d.get('trading_date')}": d for d in load_dossiers_for_run(run_id)}
-    ctx_id = _context_attempt_from_run(run_id)
+    ctx_id = context_attempt_id or _context_attempt_from_run(run_id)
     ctx_rows = (
         load_context_observations(run_id, context_attempt_id=str(ctx_id), limit=6000) if ctx_id else []
     )
@@ -105,7 +115,7 @@ def build_trade_reviews(run_id: str, week_start: str) -> list[dict[str, Any]]:
         signal_key = (str(sym), str(t.get("signal_ts") or t.get("entry_ts"))[:19])
         ctx = ctx_by.get(signal_key, {})
         td = str(t.get("entry_ts") or "")[:10]
-        doss = dossiers.get(f"{sym}|{td}", {})
+        doss = unwrap_dossier(dossiers.get(f"{sym}|{td}", {}))
         mfe, mae = _mfe_mae(t)
         pnl = float(t.get("realized_pnl") or 0)
         risk = float(t.get("entry_price") or 1) * 0.01
@@ -118,6 +128,7 @@ def build_trade_reviews(run_id: str, week_start: str) -> list[dict[str, Any]]:
         ]
         out.append(
             {
+                "trade_id": t.get("trade_id"),
                 "week": week_start,
                 "symbol": sym,
                 "trading_date": td,
@@ -145,7 +156,15 @@ def build_trade_reviews(run_id: str, week_start: str) -> list[dict[str, Any]]:
                 "result_r": r_mult,
                 "mfe": mfe,
                 "mae": mae,
-                "ui_locator": ui_locator(run_id, str(sym), t.get("entry_ts")),
+                "context_attempt_id": ctx_id,
+                "simulation_attempt_id": sim_id,
+                "ui_locator": ui_locator(
+                    run_id,
+                    str(sym),
+                    t.get("entry_ts"),
+                    context_attempt_id=str(ctx_id) if ctx_id else None,
+                    simulation_attempt_id=str(sim_id) if sim_id else None,
+                ),
             }
         )
     return out
@@ -225,8 +244,8 @@ def build_week_report(run_id: str) -> dict[str, Any]:
     action_trans = ctx_audit.get("action_transition_event_counts") or {}
     state_counts: Counter[str] = Counter(ctx_audit.get("state_duration_counts") or {})
 
-    trades = load_sim_trades(run_id)
-    blocked = load_blocked_signals(run_id)
+    trades = load_sim_trades(run_id, simulation_attempt_id=sim_id)
+    blocked = load_blocked_signals(run_id, simulation_attempt_id=sim_id)
     sim_attempt = load_simulation_attempt(sim_id) if sim_id else None
     wins = [t for t in trades if float(t.get("realized_pnl") or 0) > 0]
     losses = [t for t in trades if float(t.get("realized_pnl") or 0) < 0]

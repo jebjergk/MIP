@@ -102,14 +102,43 @@ def list_trades_filtered(
     symbol: str | None = None,
     win_only: bool | None = None,
     exit_reason: str | None = None,
+    context_attempt_id: str | None = None,
+    simulation_attempt_id: str | None = None,
 ) -> dict[str, Any]:
-    from .experiment_analytics import build_trade_reviews, list_validation_run_ids
+    from .experiment_analytics import build_trade_reviews, list_validation_run_ids, _run_config
+    from .learning_view import validate_review_attempt_override
+
+    if context_attempt_id or simulation_attempt_id:
+        if not run_id:
+            raise ValueError("run_id is required when reviewing an alternate attempt chain")
+        if not context_attempt_id or not simulation_attempt_id:
+            raise ValueError("Both context_attempt_id and simulation_attempt_id are required")
+        validate_review_attempt_override(
+            run_id=run_id,
+            context_attempt_id=context_attempt_id,
+            simulation_attempt_id=simulation_attempt_id,
+        )
+
+    from . import store as _store
 
     run_ids = [run_id] if run_id else [r["run_id"] for r in list_validation_run_ids()]
     trades: list[dict] = []
     for rid in run_ids:
-        cfg_week = str((build_week_report(rid).get("week_start") or ""))
-        trades.extend(build_trade_reviews(rid, cfg_week))
+        cfg = _run_config(rid)
+        run_detail = _store.get_run(rid)
+        cfg_week = ""
+        if run_detail and run_detail.selected_week_start:
+            cfg_week = str(run_detail.selected_week_start)[:10]
+        else:
+            cfg_week = str(cfg.get("selected_week_start") or "")[:10]
+        trades.extend(
+            build_trade_reviews(
+                rid,
+                cfg_week,
+                context_attempt_id=context_attempt_id if rid == run_id else None,
+                simulation_attempt_id=simulation_attempt_id if rid == run_id else None,
+            )
+        )
     if symbol:
         trades = [t for t in trades if str(t.get("symbol", "")).upper() == symbol.upper()]
     if win_only is True:
@@ -118,4 +147,10 @@ def list_trades_filtered(
         trades = [t for t in trades if float(t.get("realized_pnl") or 0) < 0]
     if exit_reason:
         trades = [t for t in trades if exit_reason.lower() in str(t.get("exit_reason") or "").lower()]
-    return {"count": len(trades), "trades": trades}
+    return {
+        "count": len(trades),
+        "trades": trades,
+        "review_override": bool(context_attempt_id and simulation_attempt_id),
+        "context_attempt_id": context_attempt_id,
+        "simulation_attempt_id": simulation_attempt_id,
+    }

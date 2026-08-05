@@ -21,6 +21,7 @@ _FIELD_MAP = {
     "next_automatic_action": "NEXT_AUTOMATIC_ACTION",
     "lease_owner": "LEASE_OWNER",
     "lease_until": "LEASE_UNTIL",
+    "heartbeat_at": "HEARTBEAT_AT",
     "cohort_json": "COHORT_JSON",
     "progress_json": "PROGRESS_JSON",
     "attempt_ids_json": "ATTEMPT_IDS_JSON",
@@ -380,7 +381,32 @@ def append_event(
         conn.close()
 
 
+def get_execution(execution_id: str) -> dict[str, Any] | None:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT *
+            FROM MIP.APP.BROOKS_EXPERIMENT_EXECUTION
+            WHERE EXECUTION_ID = %s
+            """,
+            (execution_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [d[0].lower() for d in cur.description]
+        rec = dict(zip(cols, row))
+        for k in _JSON_FIELDS:
+            rec[k] = _parse_json(rec.get(k))
+        return rec
+    finally:
+        conn.close()
+
+
 def list_events(execution_id: str, *, limit: int = 80) -> list[dict[str, Any]]:
+    """Return the newest `limit` events in chronological order (EVENT_TS, EVENT_ID)."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -388,10 +414,15 @@ def list_events(execution_id: str, *, limit: int = 80) -> list[dict[str, Any]]:
             """
             SELECT EVENT_ID, EVENT_TS, SEVERITY, STAGE, WEEK_START, SYMBOL, TRADING_DATE,
                    MESSAGE, DETAIL_JSON, RECOVERABLE
-            FROM MIP.APP.BROOKS_EXPERIMENT_EVENT
-            WHERE EXECUTION_ID = %s
-            ORDER BY EVENT_ID DESC
-            LIMIT %s
+            FROM (
+                SELECT EVENT_ID, EVENT_TS, SEVERITY, STAGE, WEEK_START, SYMBOL, TRADING_DATE,
+                       MESSAGE, DETAIL_JSON, RECOVERABLE
+                FROM MIP.APP.BROOKS_EXPERIMENT_EVENT
+                WHERE EXECUTION_ID = %s
+                ORDER BY EVENT_TS DESC, EVENT_ID DESC
+                LIMIT %s
+            )
+            ORDER BY EVENT_TS ASC, EVENT_ID ASC
             """,
             (execution_id, limit),
         )
@@ -401,6 +432,6 @@ def list_events(execution_id: str, *, limit: int = 80) -> list[dict[str, Any]]:
             rec = dict(zip(cols, raw))
             rec["detail_json"] = _parse_json(rec.get("detail_json"))
             out.append(rec)
-        return list(reversed(out))
+        return out
     finally:
         conn.close()

@@ -7,6 +7,8 @@ from typing import Any
 
 from .context_repository import load_context_observations
 from .historical_bar_repository import load_bars_from_store
+from .position_management_ledger_store import load_management_ledger
+from .position_management_ruleset_v01 import RULESET_VERSION as PM_RULESET_VERSION
 from .simulation_repository import load_sim_trades, load_simulation_attempt
 from .simulation_ruleset_v01 import RULESET_VERSION, resolve_params
 
@@ -15,6 +17,28 @@ def simulation_exit_rules_for_attempt(simulation_attempt_id: str | None) -> dict
     """Human-readable exit rules active for V0_1 (parameters are fixed defaults today)."""
     attempt = load_simulation_attempt(simulation_attempt_id) if simulation_attempt_id else None
     version = str((attempt or {}).get("simulation_ruleset_version") or RULESET_VERSION)
+    if version == PM_RULESET_VERSION:
+        from .position_management_ruleset_v01 import resolve_params as pm_params
+
+        p = pm_params(None)
+        return {
+            "simulation_ruleset_version": version,
+            "simulation_attempt_id": simulation_attempt_id,
+            "inactive_review_only": True,
+            "parameters": p,
+            "exit_rules": [
+                "PM01 initial structural stop (activates bar after entry).",
+                "PM02 stop gap-through at open or protective stop on bar low.",
+                "PM03 trail on CONFIRMED STRUCTURAL_SWING_LOW (active next bar).",
+                "PM04 CONTEXT_FAILED_BREAKOUT at next bar open.",
+                "PM05 THESIS_INVALIDATED at next bar open.",
+                "PM06 FORCED_END_OF_DAY_EXIT at final RTH bar close.",
+                "Precedence: stop/gap → scheduled context open → intrabar stop → schedule signals → EOD.",
+            ],
+            "entry_rules": [
+                "Entries unchanged from BROOKS_SIMULATION_RULESET_V0_1 (CONSIDER_ENTRY @ bar close).",
+            ],
+        }
     params = resolve_params(None)
     return {
         "simulation_ruleset_version": version,
@@ -111,12 +135,24 @@ def build_trade_management_review(
     *,
     context_attempt_id: str,
     simulation_attempt_id: str,
+    workspace_symbol: str | None = None,
 ) -> dict[str, Any]:
     trades = load_sim_trades(run_id, simulation_attempt_id=simulation_attempt_id)
     trade = next((t for t in trades if str(t.get("trade_id")) == str(trade_id)), None)
     if not trade:
         raise ValueError(f"Trade not found for simulation attempt: {trade_id}")
 
+    trade_sim = str(trade.get("simulation_attempt_id") or simulation_attempt_id)
+    if str(trade_sim) != str(simulation_attempt_id):
+        raise ValueError(
+            "Trade does not belong to the selected simulation attempt; management review withheld."
+        )
+    trade_sym = str(trade.get("symbol") or "").upper()
+    if workspace_symbol and trade_sym != str(workspace_symbol).upper():
+        raise ValueError(
+            f"Trade symbol {trade_sym} does not match workspace symbol {workspace_symbol.upper()}; "
+            "management review withheld."
+        )
     ctx_rows = load_context_observations(run_id, context_attempt_id=context_attempt_id, limit=6000)
     entry_key = (str(trade.get("symbol")), str(trade.get("entry_ts") or trade.get("signal_ts"))[:19])
     ctx_at_entry = next(
@@ -129,15 +165,34 @@ def build_trade_management_review(
     )
     pj = ctx_at_entry.get("payload_json") or {}
     intra_inv, daily_inv = _invalidation_levels(pj)
-    stop_at_entry = intra_inv if intra_inv is not None else daily_inv
-    stop_source = (
+
+    exc = _excursion_stats(trade)
+    rules = simulation_exit_rules_for_attempt(simulation_attempt_id)
+    ledger = load_management_ledger(simulation_attempt_id)
+    if ledger and str(ledger.get("simulation_attempt_id") or simulation_attempt_id) != str(simulation_attempt_id):
+        ledger = None
+    pm_initial = None
+    pm_trail_events: list[dict[str, Any]] = []
+    ledger_events: list[dict[str, Any]] = []
+    if ledger:
+        for ev in ledger.get("events") or []:
+            ev_sym = str(ev.get("symbol") or trade_sym).upper()
+            if ev_sym != trade_sym:
+                continue
+            ledger_events.append(ev)
+            if ev.get("event") == "INITIAL_STOP_CALCULATED":
+                pm_initial = ev
+            if ev.get("event") in ("STOP_TRAIL_SCHEDULED", "STOP_TRAIL_UPDATE", "STOP_ACTIVATED"):
+                pm_trail_events.append(ev)
+
+    stop_at_entry = pm_initial.get("stop_price") if pm_initial else (
+        intra_inv if intra_inv is not None else (daily_inv if daily_inv is not None else None)
+    )
+    stop_source = pm_initial.get("stop_source") if pm_initial else (
         "intraday_setup_invalidation"
         if intra_inv is not None
         else ("daily_thesis_invalidation" if daily_inv is not None else None)
     )
-
-    exc = _excursion_stats(trade)
-    rules = simulation_exit_rules_for_attempt(simulation_attempt_id)
 
     return {
         "trade_id": trade_id,
@@ -152,13 +207,25 @@ def build_trade_management_review(
             "configured": stop_at_entry is not None,
             "price": stop_at_entry,
             "source_field": stop_source,
-            "simulator_enforcement": "stored_only_not_checked",
+            "simulator_enforcement": "pm_v01_active" if pm_initial else "stored_only_not_checked",
             "display": stop_at_entry if stop_at_entry is not None else "Not configured",
         },
         "current_stop": {
-            "updated": False,
-            "price": stop_at_entry if stop_at_entry is not None else None,
-            "display": "Not updated by simulator" if stop_at_entry is not None else "Not configured",
+            "updated": bool(pm_trail_events),
+            "price": pm_trail_events[-1].get("new_stop") if pm_trail_events else stop_at_entry,
+            "display": (
+                f"PM trail ({len(pm_trail_events)} updates)"
+                if pm_trail_events
+                else ("Not updated by simulator" if stop_at_entry is not None else "Not configured")
+            ),
+        },
+        "management_ledger": ledger_events if ledger_events else None,
+        "management_ledger_chronological": ledger_events if ledger_events else None,
+        "mfe_mae_review_only": {
+            "mfe": exc["mfe"],
+            "mae": exc["mae"],
+            "max_unrealized_pnl": exc["max_unrealized_pnl"],
+            "disclaimer": "Post-trade analytics only — never used as rule inputs.",
         },
         "mfe": exc["mfe"],
         "mae": exc["mae"],

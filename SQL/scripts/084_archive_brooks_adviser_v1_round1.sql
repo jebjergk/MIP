@@ -1,0 +1,45 @@
+-- Archive round-1 BROOKS_INTRADAY_ADVISER_V1_0 validation attempts (physical rows kept).
+-- After this: UI session list + already_validated guard ignore ARCHIVED attempts.
+
+USE ROLE MIP_ADMIN_ROLE;
+USE DATABASE MIP;
+USE SCHEMA APP;
+
+-- Preview
+SELECT
+    a.ADVISER_ATTEMPT_ID,
+    a.SYMBOL,
+    a.TRADING_DATE,
+    a.STATUS,
+    a.RUN_ID,
+    (
+        SELECT COUNT(*)
+        FROM MIP.APP.BROOKS_INTRADAY_ADVISER_CALL c
+        WHERE c.ADVISER_ATTEMPT_ID = a.ADVISER_ATTEMPT_ID
+    ) AS CALL_COUNT
+FROM MIP.APP.BROOKS_INTRADAY_ADVISER_ATTEMPT a
+WHERE a.CONFIG_JSON:adviser_version::STRING = 'BROOKS_INTRADAY_ADVISER_V1_0'
+  AND a.STATUS = 'COMPLETED'
+ORDER BY a.TRADING_DATE, a.SYMBOL;
+
+UPDATE MIP.APP.BROOKS_INTRADAY_ADVISER_ATTEMPT a
+SET
+    STATUS = 'ARCHIVED',
+    CONFIG_JSON = OBJECT_INSERT(
+        COALESCE(a.CONFIG_JSON, OBJECT_CONSTRUCT()),
+        'validation_archive',
+        OBJECT_CONSTRUCT(
+            'round', 1,
+            'reason', 'v1_validation_round1_wake_contract_revalidation',
+            'archived_at', TO_VARCHAR(CURRENT_TIMESTAMP())
+        ),
+        TRUE
+    )
+WHERE a.CONFIG_JSON:adviser_version::STRING = 'BROOKS_INTRADAY_ADVISER_V1_0'
+  AND a.STATUS = 'COMPLETED';
+
+SELECT STATUS, COUNT(*) AS C
+FROM MIP.APP.BROOKS_INTRADAY_ADVISER_ATTEMPT
+WHERE CONFIG_JSON:adviser_version::STRING = 'BROOKS_INTRADAY_ADVISER_V1_0'
+GROUP BY STATUS
+ORDER BY STATUS;

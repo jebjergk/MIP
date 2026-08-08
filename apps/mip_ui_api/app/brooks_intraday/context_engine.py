@@ -16,6 +16,7 @@ from .context_engine_v01 import (
 from .context_ruleset_v01 import RULESET_VERSION as RULESET_V01
 from .context_ruleset_v02 import RULESET_VERSION as RULESET_V02
 from .context_ruleset_v03 import RULESET_VERSION as RULESET_V03
+from .context_ruleset_v04 import RULESET_VERSION as RULESET_V04
 
 __all__ = [
     "ContextResult",
@@ -55,6 +56,21 @@ def advance_context_for_bar(
             objective_obs=objective_obs,
             patterns=patterns,
             params=params,
+        )
+    if rs == RULESET_V04:
+        from .context_engine_v04 import advance_context_v04_for_bar
+
+        return advance_context_v04_for_bar(
+            state=state,
+            dossier=dossier,
+            symbol=symbol,
+            trading_date=trading_date,
+            bar=bar,
+            bar_index_in_session=bar_index_in_session,
+            objective_obs=objective_obs,
+            patterns=patterns,
+            params=params,
+            open_position_symbol=open_position_symbol,
         )
     if rs == RULESET_V03:
         from .context_engine_v03 import advance_context_v03_for_bar

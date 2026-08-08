@@ -11,6 +11,7 @@ from app.db import get_connection
 from .context_repository import load_context_observations
 from .context_ruleset_v02 import RULESET_VERSION as CONTEXT_V02
 from .context_ruleset_v03 import RULESET_VERSION as CONTEXT_V03
+from .context_ruleset_v04 import RULESET_VERSION as CONTEXT_V04
 from .errors import BrooksIntradayError
 from .replay_engine import (
     _bars_index,
@@ -50,6 +51,13 @@ from .simulation_ruleset_v01 import (
     REQUIRED_CONTEXT_RULESET,
     resolve_params,
 )
+from .reentry_policy_v01 import (
+    evaluate_reentry_for_consider_entry,
+    get_reentry_tracker,
+    note_reentry_exit,
+    observe_reentry_context_bar,
+    plain_language_for_block,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,18 +81,22 @@ def run_simulation_replay_bulk(
     on_progress=None,
     required_context_ruleset: str | None = None,
     notes: str | None = None,
+    allow_diagnostic_legacy: bool = False,
 ) -> str:
     verify_replay_ready(state)
+    from .lab_execution_policy import require_diagnostic_legacy
+
+    require_diagnostic_legacy(state, "phase7_simulation_bulk", allow_diagnostic_legacy=allow_diagnostic_legacy)
     verify_schedule_bars(state)
     run_id = state["run_id"]
     params = resolve_params(state.get("configuration", {}).get("simulation_parameters"))
 
     # Default remains Freeze-V1 / Phase 7 gate on V0.2. Phase E may pass V0.3 explicitly.
     required = required_context_ruleset or REQUIRED_CONTEXT_RULESET
-    if required not in (CONTEXT_V02, CONTEXT_V03):
+    if required not in (CONTEXT_V02, CONTEXT_V03, CONTEXT_V04):
         raise BrooksIntradayError(
             "SIMULATION_CONTEXT_RULESET_FORBIDDEN",
-            f"Simulation gating refuses {required}; allowed: {CONTEXT_V02}, {CONTEXT_V03}.",
+            f"Simulation gating refuses {required}; allowed: {CONTEXT_V02}, {CONTEXT_V03}, {CONTEXT_V04}.",
             run_id=run_id,
         )
 
@@ -111,9 +123,13 @@ def run_simulation_replay_bulk(
 
     # No run-wide DELETE — isolation via SIMULATION_ATTEMPT_ID on new writes.
     default_notes = (
-        "Phase E simulation (V0.3 context gating; disposable)"
-        if required == CONTEXT_V03
-        else "Phase 7 pilot week simulation (V0.2 context gating)"
+        "V0.4 simulation (intraday-led context; disposable)"
+        if required == CONTEXT_V04
+        else (
+            "Phase E simulation (V0.3 context gating; disposable)"
+            if required == CONTEXT_V03
+            else "Phase 7 pilot week simulation (V0.2 context gating)"
+        )
     )
     sim_attempt_id = create_simulation_attempt(
         run_id=run_id,
@@ -142,7 +158,7 @@ def run_simulation_replay_bulk(
             bar = index.get(bar_key)
             if not bar:
                 continue
-            fill_pending_exit(portfolio, bar=bar)
+            fill_pending_exit(portfolio, bar=bar, bar_index_in_session=step.bar_index_in_session)
 
         # 2) Per-symbol context processing
         entry_candidates: list[dict[str, Any]] = []
@@ -173,8 +189,41 @@ def run_simulation_replay_bulk(
                 is_last_bar_in_session=is_last,
                 params=params,
             )
+            observe_reentry_context_bar(
+                portfolio,
+                symbol=sym,
+                trading_date=step.trading_date,
+                bar_index_in_session=step.bar_index_in_session,
+                ctx=ctx,
+            )
             if step_res.entry_candidate:
-                entry_candidates.append({"symbol": sym, "bar": bar, "context": ctx, "dossier": dossier})
+                ok_re, re_block = evaluate_reentry_for_consider_entry(
+                    portfolio,
+                    symbol=sym,
+                    trading_date=step.trading_date,
+                    bar_index_in_session=step.bar_index_in_session,
+                    ctx=ctx,
+                )
+                if not ok_re and re_block:
+                    st = get_reentry_tracker(portfolio).state_for(sym, step.trading_date)
+                    bars_since = (
+                        step.bar_index_in_session - st.last_exit_bar_index
+                        if st.last_exit_bar_index is not None
+                        else None
+                    )
+                    record_blocked_entry(
+                        portfolio,
+                        symbol=sym,
+                        signal_ts=bar.ts_utc,
+                        reason=re_block,
+                        candidate_action=entry_action,
+                        tie_break_json={
+                            "reentry_policy": "V0_1",
+                            "plain_language": plain_language_for_block(re_block, bars_since_exit=bars_since),
+                        },
+                    )
+                else:
+                    entry_candidates.append({"symbol": sym, "bar": bar, "context": ctx, "dossier": dossier})
 
         # 3) Entries — one position max
         if entry_candidates:
@@ -245,6 +294,13 @@ def run_simulation_replay_bulk(
                 }
             )
             portfolio.open_position = None
+            note_reentry_exit(
+                portfolio,
+                symbol=pos.symbol,
+                trading_date=last_bar.trading_date,
+                bar_index_in_session=schedule[-1].bar_index_in_session,
+                exit_reason="FORCED_WEEK_END_FLATTEN",
+            )
 
     emit_progress(
         on_progress,
@@ -332,6 +388,11 @@ def run_simulation_replay_bulk(
             cfg["phase_e_simulation_v03_attempt_id"] = sim_attempt_id
             cfg["phase_e_context_v03_attempt_id"] = context_attempt_id
             cfg["phase_e_simulation_v03_summary"] = summary
+    elif required == CONTEXT_V04:
+        state["phase_v04_simulation_attempt_id"] = sim_attempt_id
+        cfg["phase_v04_simulation_attempt_id"] = sim_attempt_id
+        cfg["phase_v04_context_attempt_id"] = context_attempt_id
+        cfg["phase_v04_simulation_summary"] = summary
     else:
         state["current_cash"] = portfolio.cash
         state["realized_pnl"] = portfolio.realized_pnl

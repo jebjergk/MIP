@@ -36,6 +36,7 @@ const NAV_GROUPS = [
       { to: '/structural-training', icon: '\uD83E\uDDEC', label: 'Structural Training' },
       { to: '/training',        icon: '\uD83C\uDFAF', label: 'Legacy Training' },
       { to: '/parallel-worlds', icon: '\uD83C\uDF10', label: 'Parallel Worlds' },
+      { to: '/research/brooks-intraday', icon: '\uD83D\uDCC8', label: 'Brooks Intraday Lab' },
     ],
   },
   {

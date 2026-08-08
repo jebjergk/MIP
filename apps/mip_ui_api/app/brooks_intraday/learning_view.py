@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .brooks_timestamp import bar_ts_to_ny_iso, ny_hm
 from .constants import SIMULATION_BANNER
 from .context_repository import load_context_observations, load_pattern_snapshot_index
 from .dossier_access import unwrap_dossier
@@ -17,7 +18,10 @@ from .learning_constants import (
     OFFICIAL_ATTEMPT_CHAIN,
     PILOT_RUN_ID,
     PILOT_ZERO_TRADE_DETAIL,
+    PM_V01_CERT_SIMULATION_ATTEMPT_ID,
+    PM_V01_OBSOLETE_CERT_SIMULATION_ATTEMPT_ID,
     RECONSTRUCTED_DOSSIER_BADGE,
+    REVIEW_CHAIN_SUPPLEMENTS,
     SIMULATION_ONLY_BANNER,
     ZERO_TRADE_EXPLANATION,
 )
@@ -25,6 +29,11 @@ from .observation_repository import load_observations
 from .pattern_repository import load_bar_pattern_links, load_patterns
 from .simulation_certification import HISTORICAL_SIMULATION, run_certification
 from .simulation_repository import load_blocked_signals, load_sim_trades, load_simulation_attempt
+from .adviser_foundation_ui import (
+    ADVISER_EMPTY_STATE_MESSAGE,
+    FOUNDATION_CONTEXT_RULESET,
+    is_canonical_adviser_foundation,
+)
 
 
 def _ts_key(ts: Any) -> str:
@@ -120,8 +129,54 @@ def resolve_attempt_chain(
     *,
     context_attempt_id: str | None = None,
     simulation_attempt_id: str | None = None,
+    diagnostic_legacy: bool = False,
 ) -> dict[str, Any]:
     """Resolve review attempt chain. Optional overrides are review-only (never pin writes)."""
+    adv = cfg.get("adviser_foundation") or {}
+    if adv.get("adviser_attempt_id") and adv.get("simulation_attempt_id"):
+        if not is_canonical_adviser_foundation(adv):
+            return {
+                "objective_attempt_id": None,
+                "objective_ruleset": "BROOKS_OBJECTIVE_RULESET_V0_1",
+                "pattern_attempt_id": None,
+                "pattern_ruleset": None,
+                "context_attempt_id": None,
+                "context_ruleset": FOUNDATION_CONTEXT_RULESET,
+                "simulation_attempt_id": None,
+                "simulation_ruleset": None,
+                "adviser_attempt_id": None,
+                "review_override": False,
+                "review_only": True,
+                "adviser_foundation_empty": True,
+            }
+        return {
+            "objective_attempt_id": None,
+            "objective_ruleset": "BROOKS_OBJECTIVE_RULESET_V0_1",
+            "pattern_attempt_id": None,
+            "pattern_ruleset": None,
+            "context_attempt_id": adv.get("context_attempt_id") or adv["adviser_attempt_id"],
+            "context_ruleset": adv.get("context_ruleset") or FOUNDATION_CONTEXT_RULESET,
+            "simulation_attempt_id": adv["simulation_attempt_id"],
+            "simulation_ruleset": "BROOKS_ADVISER_SIMULATION_V0_1",
+            "adviser_attempt_id": adv["adviser_attempt_id"],
+            "review_override": False,
+            "review_only": False,
+            "adviser_foundation_empty": False,
+        }
+    if not diagnostic_legacy and not (context_attempt_id or simulation_attempt_id):
+        return {
+            "objective_attempt_id": None,
+            "objective_ruleset": "BROOKS_OBJECTIVE_RULESET_V0_1",
+            "pattern_attempt_id": None,
+            "pattern_ruleset": None,
+            "context_attempt_id": None,
+            "context_ruleset": FOUNDATION_CONTEXT_RULESET,
+            "simulation_attempt_id": None,
+            "simulation_ruleset": None,
+            "review_override": False,
+            "review_only": True,
+            "adviser_foundation_empty": True,
+        }
     official = OFFICIAL_ATTEMPT_CHAIN.get(run_id, {})
     objective_id = (
         state.get("phase4_review_baseline_attempt_id")
@@ -135,6 +190,8 @@ def resolve_attempt_chain(
         or cfg.get("phase5_pattern_attempt_id")
         or official.get("pattern_attempt_id")
     )
+    e1_ctx = cfg.get("phase_e1_context_v03_attempt_id") or state.get("phase_e1_context_v03_attempt_id")
+    e1_sim = cfg.get("phase_e1_simulation_v03_attempt_id") or state.get("phase_e1_simulation_v03_attempt_id")
     context_id = (
         state.get("phase6b_context_attempt_id")
         or cfg.get("phase6b_context_attempt_id")
@@ -147,13 +204,35 @@ def resolve_attempt_chain(
         or cfg.get("phase7_simulation_attempt_id")
         or official.get("simulation_attempt_id")
     )
+    if e1_ctx and e1_sim:
+        context_id = e1_ctx
+        simulation_id = e1_sim
     context_ruleset = official.get("context_ruleset") or "BROOKS_CONTEXT_RULESET_V0_2"
     simulation_ruleset = official.get("simulation_ruleset") or "BROOKS_SIMULATION_RULESET_V0_1"
     review_override = False
 
+    if e1_ctx and e1_sim and not (context_attempt_id or simulation_attempt_id):
+        ctx_meta = _load_context_attempt_meta(str(e1_ctx))
+        if ctx_meta:
+            context_ruleset = str(ctx_meta.get("context_ruleset_version") or context_ruleset)
+        sim_meta = load_simulation_attempt(str(e1_sim))
+        if sim_meta:
+            simulation_ruleset = str(sim_meta.get("simulation_ruleset_version") or simulation_ruleset)
+
     if context_attempt_id or simulation_attempt_id:
         if not context_attempt_id or not simulation_attempt_id:
             raise ValueError("Both context_attempt_id and simulation_attempt_id are required for review override")
+        if not diagnostic_legacy:
+            from .adviser_foundation_ui import assert_legacy_review_access
+
+            ctx_meta = _load_context_attempt_meta(str(context_attempt_id))
+            ctx_rs = str((ctx_meta or {}).get("context_ruleset_version") or "")
+            assert_legacy_review_access(
+                diagnostic_legacy=False,
+                context_attempt_id=str(context_attempt_id),
+                simulation_attempt_id=str(simulation_attempt_id),
+                context_ruleset=ctx_rs or None,
+            )
         validated = validate_review_attempt_override(
             run_id=run_id,
             context_attempt_id=str(context_attempt_id),
@@ -183,9 +262,129 @@ def resolve_attempt_chain(
     }
 
 
-def list_review_chain_options(run_id: str, state: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+def _review_chain_option_label(
+    *,
+    context_ruleset: str | None,
+    simulation_ruleset: str | None,
+    context_attempt_id: str,
+    simulation_attempt_id: str,
+    trade_count: int,
+    realized_pnl: float | None = None,
+) -> str:
+    sim_rs = simulation_ruleset or "BROOKS_SIMULATION_RULESET_V0_1"
+    ctx_rs = context_ruleset or "context"
+    if "POSITION_MANAGEMENT" in sim_rs.upper():
+        head = sim_rs
+    else:
+        head = f"{ctx_rs} · {sim_rs}"
+    pnl_bit = f" · P/L {realized_pnl:+.2f}" if realized_pnl is not None else ""
+    return (
+        f"{head} · ctx {context_attempt_id[:8]}… · sim {simulation_attempt_id[:8]}… · "
+        f"trades={trade_count}{pnl_bit}"
+    )
+
+
+def _merge_review_chain_supplements(
+    run_id: str,
+    alternatives: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Ensure registered review-only chains (e.g. PM V0_1 cert) appear with explicit labels."""
+    merged = list(alternatives)
+    seen = {(a["context_attempt_id"], a["simulation_attempt_id"]) for a in merged}
+    for sup in REVIEW_CHAIN_SUPPLEMENTS.get(run_id, []):
+        ctx_id = str(sup["context_attempt_id"])
+        sim_id = str(sup["simulation_attempt_id"])
+        key = (ctx_id, sim_id)
+        if key in seen:
+            for alt in merged:
+                if alt["context_attempt_id"] == ctx_id and alt["simulation_attempt_id"] == sim_id:
+                    if sup.get("label"):
+                        alt["label"] = str(sup["label"])
+                    alt["simulation_ruleset"] = sup.get("simulation_ruleset") or alt.get("simulation_ruleset")
+                    alt["inactive_pm_ruleset"] = bool("POSITION_MANAGEMENT" in str(sup.get("simulation_ruleset") or ""))
+                    if sup.get("canonical_pm_certification"):
+                        alt["canonical_pm_certification"] = True
+            continue
+        merged.insert(
+            0,
+            {
+                "label": str(sup.get("label") or _review_chain_option_label(
+                    context_ruleset=str(sup.get("context_ruleset") or ""),
+                    simulation_ruleset=str(sup.get("simulation_ruleset") or ""),
+                    context_attempt_id=ctx_id,
+                    simulation_attempt_id=sim_id,
+                    trade_count=int(sup.get("trade_count") or 0),
+                    realized_pnl=float(sup["realized_pnl"]) if sup.get("realized_pnl") is not None else None,
+                )),
+                "context_attempt_id": ctx_id,
+                "simulation_attempt_id": sim_id,
+                "context_ruleset": sup.get("context_ruleset"),
+                "simulation_ruleset": sup.get("simulation_ruleset"),
+                "trade_count": int(sup.get("trade_count") or 0),
+                "realized_pnl": float(sup.get("realized_pnl") or 0),
+                "notes": sup.get("notes"),
+                "official": False,
+                "review_only": True,
+                "inactive_pm_ruleset": True,
+                "canonical_pm_certification": bool(sup.get("canonical_pm_certification")),
+            },
+        )
+        seen.add(key)
+    return _finalize_review_chain_alternatives(merged)
+
+
+def _finalize_review_chain_alternatives(alternatives: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Canonical PM cert first; obsolete disposable attempts clearly marked."""
+    obsolete = {PM_V01_OBSOLETE_CERT_SIMULATION_ATTEMPT_ID}
+    canonical = PM_V01_CERT_SIMULATION_ATTEMPT_ID
+    for alt in alternatives:
+        sim_id = str(alt.get("simulation_attempt_id") or "")
+        if sim_id == canonical:
+            alt["canonical_pm_certification"] = True
+            if not str(alt.get("label") or "").startswith("BROOKS_POSITION_MANAGEMENT"):
+                alt["label"] = (
+                    "BROOKS_POSITION_MANAGEMENT_RULESET_V0_1 · canonical PM certification · "
+                    f"sim {sim_id[:8]}…"
+                )
+        if sim_id in obsolete:
+            alt["obsolete_certification"] = True
+            alt["canonical_pm_certification"] = False
+            base = str(alt.get("label") or "")
+            if "obsolete certification" not in base.lower():
+                alt["label"] = f"obsolete certification — do not use · {base}"
+
+    def _sort_key(a: dict[str, Any]) -> tuple[int, str]:
+        sim_id = str(a.get("simulation_attempt_id") or "")
+        if a.get("canonical_pm_certification") or sim_id == canonical:
+            return (0, sim_id)
+        if a.get("obsolete_certification") or sim_id in obsolete:
+            return (3, sim_id)
+        if "POSITION_MANAGEMENT" in str(a.get("simulation_ruleset") or "").upper():
+            return (2, sim_id)
+        return (1, sim_id)
+
+    return sorted(alternatives, key=_sort_key)
+
+
+def list_review_chain_options(
+    run_id: str,
+    state: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    diagnostic_legacy: bool = False,
+) -> dict[str, Any]:
     """Official pinned chain + completed alternative context/sim pairs (read-only)."""
-    official_chain = resolve_attempt_chain(run_id, state, cfg)
+    official_chain = resolve_attempt_chain(
+        run_id, state, cfg, diagnostic_legacy=diagnostic_legacy
+    )
+    if official_chain.get("adviser_foundation_empty") and not diagnostic_legacy:
+        return {
+            "run_id": run_id,
+            "official": None,
+            "alternatives": [],
+            "diagnostic_legacy": False,
+            "adviser_foundation_empty": True,
+        }
     from app.db import get_connection
 
     alternatives: list[dict[str, Any]] = []
@@ -225,12 +424,16 @@ def list_review_chain_options(run_id: str, state: dict[str, Any], cfg: dict[str,
             )
             if is_official:
                 continue
+            sim_rs = str(rec.get("simulation_ruleset_version") or "")
             alternatives.append(
                 {
-                    "label": (
-                        f"{rec.get('context_ruleset_version') or 'context'} · "
-                        f"ctx {ctx_id[:8]}... · sim {sim_id[:8]}... · "
-                        f"trades={int(rec.get('trade_count') or 0)}"
+                    "label": _review_chain_option_label(
+                        context_ruleset=str(rec.get("context_ruleset_version") or ""),
+                        simulation_ruleset=sim_rs,
+                        context_attempt_id=ctx_id,
+                        simulation_attempt_id=sim_id,
+                        trade_count=int(rec.get("trade_count") or 0),
+                        realized_pnl=float(rec.get("realized_pnl") or 0),
                     ),
                     "context_attempt_id": ctx_id,
                     "simulation_attempt_id": sim_id,
@@ -241,19 +444,25 @@ def list_review_chain_options(run_id: str, state: dict[str, Any], cfg: dict[str,
                     "notes": rec.get("notes"),
                     "official": False,
                     "review_only": True,
+                    "inactive_pm_ruleset": "POSITION_MANAGEMENT" in sim_rs.upper(),
                 }
             )
     finally:
         conn.close()
 
+    alternatives = _merge_review_chain_supplements(run_id, alternatives)
+
+    off_ctx = str(official_chain.get("context_attempt_id") or "")
+    off_sim = str(official_chain.get("simulation_attempt_id") or "")
+    off_sim_rs = str(official_chain.get("simulation_ruleset") or "")
     return {
         "run_id": run_id,
         "official": {
             "label": (
                 f"Official pinned · "
                 f"{official_chain.get('context_ruleset')} · "
-                f"ctx {(official_chain.get('context_attempt_id') or '')[:8]}... · "
-                f"sim {(official_chain.get('simulation_attempt_id') or '')[:8]}..."
+                f"{off_sim_rs} · "
+                f"ctx {off_ctx[:8]}… · sim {off_sim[:8]}…"
             ),
             "context_attempt_id": official_chain.get("context_attempt_id"),
             "simulation_attempt_id": official_chain.get("simulation_attempt_id"),
@@ -337,7 +546,10 @@ def extract_state_transitions(rows: list[dict[str, Any]], *, symbol: str | None 
         st = row.get("state_after")
         act = row.get("selected_action")
         if st != prev_state or act != prev_action:
-            ts_ny = row.get("bar_ts_ny") or row.get("bar_ts")
+            ts_ny = bar_ts_to_ny_iso(
+                bar_ts_ny=row.get("bar_ts_ny"),
+                bar_ts_utc=row.get("bar_ts"),
+            )
             out.append(
                 {
                     "bar_ts": row.get("bar_ts"),
@@ -357,13 +569,18 @@ def extract_state_transitions(rows: list[dict[str, Any]], *, symbol: str | None 
 
 
 def _format_ny_short(ts: Any) -> str:
-    s = str(ts)
-    if "T" in s:
-        part = s.split("T", 1)[1][:5]
-        return part
-    if " " in s:
-        return s.split(" ", 1)[1][:5]
-    return s[:5]
+    if ts is None:
+        return "—"
+    s = str(ts).replace(" ", "T")
+    if len(s) >= 13:
+        try:
+            hour = int(s[11:13])
+        except ValueError:
+            hour = -1
+        # Naive persisted BAR_TS during RTH is UTC (13:00–21:00)
+        if 13 <= hour <= 21:
+            return ny_hm(bar_ts_utc=ts)
+    return ny_hm(bar_ts_ny=ts)
 
 
 def transition_context_markers(context_row: dict[str, Any], *, is_transition: bool) -> list[str]:
@@ -406,14 +623,25 @@ def _simulation_effect_for_bar(
     bar_ts: str,
     trades: list[dict[str, Any]],
     blocked: list[dict[str, Any]],
+    *,
+    symbol: str | None = None,
 ) -> str:
+    sym_u = str(symbol or "").upper()
     for t in trades:
+        if sym_u and str(t.get("symbol", "")).upper() != sym_u:
+            continue
         if _ts_key(t.get("entry_ts")) == bar_ts:
             return f"ENTRY {t.get('symbol')} qty={t.get('quantity')}"
         if _ts_key(t.get("exit_ts")) == bar_ts:
             return f"EXIT {t.get('exit_reason') or 'CLOSE'}"
     for b in blocked:
+        if sym_u and str(b.get("symbol", "")).upper() != sym_u:
+            continue
         if _ts_key(b.get("signal_ts")) == bar_ts:
+            tj = b.get("tie_break_json") or {}
+            plain = tj.get("plain_language") if isinstance(tj, dict) else None
+            if plain:
+                return f"BLOCKED — {plain}"
             return f"BLOCKED {b.get('block_reason')}"
     return "—"
 
@@ -559,7 +787,7 @@ def _merge_symbol_grid(
         is_action_tr = action != prev_action or prev_action is None
         pj = (ctx or {}).get("payload_json") or {}
         blockers = pj.get("blockers_json") or []
-        sim_eff = _simulation_effect_for_bar(ts, trades, blocked)
+        sim_eff = _simulation_effect_for_bar(ts, trades, blocked, symbol=sym_upper)
         dm = (obs or {}).get("derived_metrics_json") or {}
         ohlcv = _ohlcv_from_obs_or_bar(obs, bar)
         close = ohlcv.get("close")
@@ -580,7 +808,10 @@ def _merge_symbol_grid(
         grid.append(
             {
                 "bar_ts": bar.get("ts_utc") or (obs or {}).get("bar_ts"),
-                "bar_ts_ny": bar.get("ts_ny") or (obs or {}).get("bar_ts_ny"),
+                "bar_ts_ny": bar_ts_to_ny_iso(
+                    bar_ts_ny=bar.get("ts_ny") or (obs or {}).get("bar_ts_ny"),
+                    bar_ts_utc=bar.get("ts_utc") or (obs or {}).get("bar_ts"),
+                ),
                 "bar_ts_berlin": _berlin_ts(bar.get("ts_ny") or bar.get("ts_utc") or (obs or {}).get("bar_ts")),
                 "trading_date": bar.get("trading_date") or (obs or {}).get("trading_date"),
                 "symbol": sym_upper,
@@ -684,6 +915,34 @@ def build_symbol_learning_payload(
     dossier: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sym = symbol.upper()
+    if attempts.get("adviser_attempt_id"):
+        from datetime import date as date_cls
+
+        from .adviser_learning_view import build_adviser_educational_grid
+        from .historical_bar_repository import load_bars_from_store
+
+        td = trading_date
+        if not td:
+            week_start = state.get("selected_week_start") or cfg.get("selected_week_start")
+            if week_start:
+                bars_raw = load_bars_for_symbol_week(sym, week_start if isinstance(week_start, date_cls) else date_cls.fromisoformat(str(week_start)[:10]))
+                td = bars_raw[0].trading_date if bars_raw else None
+        if not td:
+            b0 = load_bars_from_store(sym, date_cls(2026, 7, 13))
+            td = b0[0].trading_date if b0 else date_cls(2026, 7, 13)
+        grid = build_adviser_educational_grid(
+            adviser_attempt_id=str(attempts["adviser_attempt_id"]),
+            symbol=sym,
+            trading_date=td,
+        )
+        return {
+            "run_id": run_id,
+            "symbol": sym,
+            "educational_grid": grid,
+            "chart": {"bars": grid, "overlays": {}},
+            "adviser_foundation": True,
+        }
+
     week_start = state.get("selected_week_start") or cfg.get("selected_week_start")
     if week_start and not isinstance(week_start, date):
         week_start = date.fromisoformat(str(week_start)[:10])
@@ -721,8 +980,10 @@ def build_symbol_learning_payload(
         load_bar_pattern_links(run_id, replay_attempt_id=str(pat_id), symbol=sym, limit=5000) if pat_id else []
     )
     sim_id = attempts.get("simulation_attempt_id")
-    trades = load_sim_trades(run_id, simulation_attempt_id=sim_id)
-    blocked = load_blocked_signals(run_id, simulation_attempt_id=sim_id)
+    trades_all = load_sim_trades(run_id, simulation_attempt_id=sim_id)
+    blocked_all = load_blocked_signals(run_id, simulation_attempt_id=sim_id)
+    trades = [t for t in trades_all if str(t.get("symbol", "")).upper() == sym]
+    blocked = [b for b in blocked_all if str(b.get("symbol", "")).upper() == sym]
 
     grid = _merge_symbol_grid(
         bars=bars,
@@ -986,6 +1247,7 @@ def build_run_learning_payload(
     active_trading_date: date | None = None,
     context_attempt_id: str | None = None,
     simulation_attempt_id: str | None = None,
+    diagnostic_legacy: bool = False,
 ) -> dict[str, Any]:
     attempts = resolve_attempt_chain(
         run_id,
@@ -993,7 +1255,18 @@ def build_run_learning_payload(
         cfg,
         context_attempt_id=context_attempt_id,
         simulation_attempt_id=simulation_attempt_id,
+        diagnostic_legacy=diagnostic_legacy,
     )
+    if attempts.get("adviser_foundation_empty"):
+        return {
+            "run_id": run_id,
+            "adviser_foundation_empty": True,
+            "message": ADVISER_EMPTY_STATE_MESSAGE,
+            "symbols": symbols,
+            "mode": mode,
+            "provenance": build_provenance_header(run_id=run_id, attempts=attempts, cfg=cfg, dossiers=dossiers),
+            "simulation_banner": SIMULATION_ONLY_BANNER,
+        }
     provenance = build_provenance_header(run_id=run_id, attempts=attempts, cfg=cfg, dossiers=dossiers)
     sim_id = attempts.get("simulation_attempt_id")
     trades = load_sim_trades(run_id, simulation_attempt_id=sim_id)
@@ -1085,10 +1358,21 @@ def _reclaim_from_payload(ctx_row: dict[str, Any]) -> str | None:
     return ci.get("reclaim_state") or ci.get("reclaim_status")
 
 
-def build_account_timeline(run_id: str, simulation_attempt_id: str | None) -> dict[str, Any]:
-    trades = load_sim_trades(run_id, simulation_attempt_id=simulation_attempt_id)
-    blocked = load_blocked_signals(run_id, simulation_attempt_id=simulation_attempt_id)
-    account = _historical_account_summary(run_id, simulation_attempt_id, trades)
+def build_account_timeline(
+    run_id: str,
+    simulation_attempt_id: str | None,
+    *,
+    symbol: str | None = None,
+) -> dict[str, Any]:
+    trades_all = load_sim_trades(run_id, simulation_attempt_id=simulation_attempt_id)
+    blocked_all = load_blocked_signals(run_id, simulation_attempt_id=simulation_attempt_id)
+    sym_u = str(symbol or "").upper() if symbol else ""
+    trades = trades_all
+    blocked = blocked_all
+    if sym_u:
+        trades = [t for t in trades_all if str(t.get("symbol", "")).upper() == sym_u]
+        blocked = [b for b in blocked_all if str(b.get("symbol", "")).upper() == sym_u]
+    account = _historical_account_summary(run_id, simulation_attempt_id, trades_all)
     events: list[dict[str, Any]] = []
     for t in trades:
         events.append(
@@ -1121,6 +1405,7 @@ def build_account_timeline(run_id: str, simulation_attempt_id: str | None) -> di
     return {
         "run_id": run_id,
         "simulation_attempt_id": simulation_attempt_id,
+        "symbol_filter": sym_u or None,
         "account": account,
         "events": events,
         "fixture_isolation": "Certification fixture trades are never persisted to BROOKS_INTRADAY_SIM_TRADE.",

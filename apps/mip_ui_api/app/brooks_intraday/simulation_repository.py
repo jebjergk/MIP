@@ -22,8 +22,10 @@ def create_simulation_attempt(
     context_ruleset_version: str,
     starting_cash: float,
     notes: str | None = None,
+    simulation_ruleset_version: str | None = None,
 ) -> str:
     attempt_id = str(uuid.uuid4())
+    sim_version = simulation_ruleset_version or RULESET_VERSION
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -40,7 +42,7 @@ def create_simulation_attempt(
                 run_id,
                 context_attempt_id,
                 context_ruleset_version,
-                RULESET_VERSION,
+                sim_version,
                 "IN_PROGRESS",
                 starting_cash,
                 notes,

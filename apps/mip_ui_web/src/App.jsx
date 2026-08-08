@@ -24,7 +24,7 @@ import StructuralMarketTimeline from './pages/StructuralMarketTimeline'
 import StructuralCommitteeHearing from './pages/StructuralCommitteeHearing'
 import CommitteePerformance from './pages/CommitteePerformance'
 import PriceActionAnalyser from './pages/PriceActionAnalyser'
-import BrooksIntradayLab from './pages/BrooksIntradayLab'
+import BrooksIntradayLabShell from './pages/BrooksIntradayLabShell'
 import AppLayout from './components/AppLayout'
 import { AskMipRuntimeProvider } from './context/AskMipRuntimeContext'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
@@ -116,7 +116,7 @@ export default function App() {
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/structural-timeline" element={<StructuralMarketTimeline />} />
         <Route path="/price-action-analyser" element={<PriceActionAnalyser />} />
-        <Route path="/research/brooks-intraday" element={<BrooksIntradayLab />} />
+        <Route path="/research/brooks-intraday" element={<BrooksIntradayLabShell />} />
         <Route path="/structural-committee" element={<StructuralCommitteeHearing />} />
         <Route path="/structural-committee/:hearingId" element={<StructuralCommitteeHearing />} />
         <Route path="/committee-performance" element={<CommitteePerformance />} />

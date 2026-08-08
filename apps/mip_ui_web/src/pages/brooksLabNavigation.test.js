@@ -21,6 +21,15 @@ const LOCATOR = {
 }
 
 describe('brooksLabNavigation', () => {
+  it('selecting alternate chain clears stale trade management state', () => {
+    const seeded = {
+      ...initialLabNavigationState(),
+      reviewChainOverride: ALT,
+    }
+    const { state } = applyReviewChainChange(seeded, null)
+    expect(state.reviewChainOverride).toBeNull()
+  })
+
   it('selecting alternate chain does not force locator scroll and clears stale selection', () => {
     const seeded = {
       ...initialLabNavigationState(),

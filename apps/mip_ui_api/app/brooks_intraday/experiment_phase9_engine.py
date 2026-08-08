@@ -175,15 +175,19 @@ def _run_pipeline_stage(
 ) -> dict[str, Any]:
     from . import store
     from .experiment_progress import make_progress_callback, patch_stage_progress
+    from .lab_execution_policy import legacy_pipeline_env_enabled
     from .replay_engine import run_objective_replay_bulk, run_pattern_replay_bulk
     from .pattern_ruleset_v03 import RULESET_VERSION as PATTERN_V03
 
+    allow = legacy_pipeline_env_enabled()
     run_id = state["run_id"]
     if stage_key == STAGE_OBJECTIVE_REPLAY:
         if state.get("phase4_review_baseline_attempt_id"):
             return {"attempt_id": state["phase4_review_baseline_attempt_id"], "skipped": True}
         cb = make_progress_callback(execution_id, stage=stage_key, total=1560, unit="observations", every=100)
-        obj_id = run_objective_replay_bulk(state, progress_every=50, on_progress=cb)
+        obj_id = run_objective_replay_bulk(
+            state, progress_every=50, on_progress=cb, allow_diagnostic_legacy=allow
+        )
         state["phase4_review_baseline_attempt_id"] = obj_id
         state.setdefault("configuration", {})["phase4_review_baseline_attempt_id"] = obj_id
         with store._lock:
@@ -203,7 +207,9 @@ def _run_pipeline_stage(
         # Pattern schedule length equals bar-steps; progress unit is schedule steps.
         sched_total = 390
         cb = make_progress_callback(execution_id, stage=stage_key, total=sched_total, unit="schedule_steps", every=50)
-        pat_id = run_pattern_replay_bulk(state, progress_every=50, on_progress=cb)
+        pat_id = run_pattern_replay_bulk(
+            state, progress_every=50, on_progress=cb, allow_diagnostic_legacy=allow
+        )
         state["phase5_pattern_v03_attempt_id"] = pat_id
         state.setdefault("configuration", {})["phase5_pattern_v03_attempt_id"] = pat_id
         with store._lock:
@@ -218,7 +224,7 @@ def _run_pipeline_stage(
         if cfg.get("phase6b_context_attempt_id"):
             return {"attempt_id": cfg["phase6b_context_attempt_id"], "skipped": True}
         cb = make_progress_callback(execution_id, stage=stage_key, total=1560, unit="observations", every=100)
-        ctx_out = store.run_context_bulk_v02(run_id, on_progress=cb)
+        ctx_out = store.run_context_bulk_v02(run_id, on_progress=cb, allow_diagnostic_legacy=allow)
         ctx_id = str(ctx_out["context_attempt_id"])
         with store._lock:
             state = store._runs[run_id]
@@ -231,7 +237,9 @@ def _run_pipeline_stage(
         ctx_id = cfg.get("phase6b_context_attempt_id")
         if cfg.get("simulation_attempt_id"):
             return {"attempt_id": cfg["simulation_attempt_id"], "skipped": True}
-        sim_out = store.run_simulation_bulk(run_id, context_attempt_id=str(ctx_id))
+        sim_out = store.run_simulation_bulk(
+            run_id, context_attempt_id=str(ctx_id), allow_diagnostic_legacy=allow
+        )
         sim_id = str(sim_out.get("simulation_attempt_id") or "")
         with store._lock:
             state = store._runs[run_id]

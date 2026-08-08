@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from .constants import SIMULATION_BANNER
@@ -42,6 +42,8 @@ def get_lab_persist_mode() -> dict:
 @router.get("/meta")
 def lab_meta() -> dict:
     from .experiment_phase9_service import _active_persist_mode
+    from .lab_execution_policy import meta_execution_policy
+    from .lab_pipeline_registry import compute_hotspots, pipeline_stages, snowflake_object_inventory
 
     return {
         "module": "brooks-intraday-lab",
@@ -49,7 +51,11 @@ def lab_meta() -> dict:
         "execution_authority": False,
         "real_portfolio_integration": False,
         "brooks_persist_mode": _active_persist_mode(),
-        "phase": "9_unseen_validation",
+        "phase": "adviser_foundation",
+        "execution_policy": meta_execution_policy(),
+        "pipeline_stages": pipeline_stages(),
+        "snowflake_inventory_count": len(snowflake_object_inventory()),
+        "compute_hotspots": compute_hotspots(),
     }
 
 
@@ -139,10 +145,12 @@ def get_replay_attempts(run_id: str) -> dict:
 
 
 @router.post("/runs/{run_id}/reset-pattern-replay", response_model=SimpleStatusResponse)
-def post_reset_pattern_replay(run_id: str) -> SimpleStatusResponse:
+def post_reset_pattern_replay(
+    run_id: str, diagnostic_legacy: bool = Query(False, alias="diagnostic_legacy")
+) -> SimpleStatusResponse:
     from . import replay_service
 
-    return replay_service.reset_pattern_run(run_id)
+    return replay_service.reset_pattern_run(run_id, allow_diagnostic_legacy=diagnostic_legacy)
 
 
 @router.get("/runs/{run_id}/patterns/review")
@@ -165,11 +173,17 @@ def get_context_observations(run_id: str, symbol: str) -> dict:
 
 
 @router.post("/runs/{run_id}/simulation/bulk")
-def post_simulation_bulk(run_id: str, context_attempt_id: str | None = None) -> dict:
+def post_simulation_bulk(
+    run_id: str,
+    context_attempt_id: str | None = None,
+    diagnostic_legacy: bool = Query(False, alias="diagnostic_legacy"),
+) -> dict:
     from .simulation_ruleset_v01 import DEFAULT_CONTEXT_ATTEMPT_ID
 
     return store.run_simulation_bulk(
-        run_id, context_attempt_id=context_attempt_id or DEFAULT_CONTEXT_ATTEMPT_ID
+        run_id,
+        context_attempt_id=context_attempt_id or DEFAULT_CONTEXT_ATTEMPT_ID,
+        allow_diagnostic_legacy=diagnostic_legacy,
     )
 
 
@@ -185,8 +199,10 @@ def get_blocked_signals(run_id: str) -> dict:
 
 
 @router.post("/runs/{run_id}/context/bulk")
-def post_context_bulk(run_id: str) -> dict:
-    return store.run_context_bulk(run_id)
+def post_context_bulk(
+    run_id: str, diagnostic_legacy: bool = Query(False, alias="diagnostic_legacy")
+) -> dict:
+    return store.run_context_bulk(run_id, allow_diagnostic_legacy=diagnostic_legacy)
 
 
 @router.get("/runs/{run_id}/observations/review")
@@ -270,6 +286,7 @@ def get_learning_view(
     trading_date: date | None = None,
     context_attempt_id: str | None = None,
     simulation_attempt_id: str | None = None,
+    diagnostic_legacy: bool = Query(False, alias="diagnostic_legacy"),
 ) -> dict:
     from . import learning_service
 
@@ -280,6 +297,7 @@ def get_learning_view(
         trading_date=trading_date,
         context_attempt_id=context_attempt_id,
         simulation_attempt_id=simulation_attempt_id,
+        diagnostic_legacy=diagnostic_legacy,
     )
 
 
@@ -352,6 +370,7 @@ def get_account_timeline(
     run_id: str,
     context_attempt_id: str | None = None,
     simulation_attempt_id: str | None = None,
+    symbol: str | None = None,
 ) -> dict:
     from . import learning_service
 
@@ -359,6 +378,7 @@ def get_account_timeline(
         run_id,
         context_attempt_id=context_attempt_id,
         simulation_attempt_id=simulation_attempt_id,
+        symbol=symbol,
     )
 
 
@@ -368,6 +388,7 @@ def get_trade_management_review(
     trade_id: str,
     context_attempt_id: str,
     simulation_attempt_id: str,
+    workspace_symbol: str | None = None,
 ) -> dict:
     from fastapi import HTTPException
 
@@ -385,6 +406,7 @@ def get_trade_management_review(
             trade_id,
             context_attempt_id=context_attempt_id,
             simulation_attempt_id=simulation_attempt_id,
+            workspace_symbol=workspace_symbol,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -396,6 +418,93 @@ def get_review_chains(run_id: str) -> dict:
     from . import learning_service
 
     return learning_service.get_review_chains(run_id)
+
+
+@router.get("/review-catalog")
+def get_review_catalog(
+    run_id: str | None = None,
+    diagnostic_legacy: bool = Query(False, alias="diagnostic_legacy"),
+) -> dict:
+    """Runs, review chains, trades, and symbol sessions for lab selection (read-only)."""
+    from . import learning_service
+
+    return learning_service.get_review_catalog(run_id=run_id, diagnostic_legacy=diagnostic_legacy)
+
+
+@router.get("/diagnostic/review-catalog")
+def get_diagnostic_review_catalog(run_id: str | None = None) -> dict:
+    """Forensic legacy review catalog (V0.x chains); not shown in normal Lab UX."""
+    from . import learning_service
+
+    return learning_service.get_review_catalog(run_id=run_id, diagnostic_legacy=True)
+
+
+@router.get("/validation/v1/config")
+def get_validation_v1_config() -> dict:
+    from .adviser_v1_validation_launcher import frozen_validation_config
+
+    return frozen_validation_config()
+
+
+@router.get("/validation/v1/bars-check")
+def get_validation_v1_bars_check(
+    symbol: str = Query(..., min_length=1),
+    trading_date: str = Query(..., min_length=10),
+) -> dict:
+    from .adviser_v1_validation_launcher import check_rth_bars
+
+    return check_rth_bars(symbol, trading_date)
+
+
+@router.post("/validation/v1/run")
+def post_validation_v1_run(body: dict) -> dict:
+    from .adviser_v1_validation_launcher import run_frozen_validation
+
+    try:
+        return run_frozen_validation(
+            symbol=str(body.get("symbol") or ""),
+            trading_date=str(body.get("trading_date") or ""),
+            run_id=body.get("run_id"),
+        )
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    except Exception as exc:
+        msg = str(exc)
+        if "Insufficient privileges" in msg or "42501" in msg:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        "Validation could not write Adviser results (database role lacks INSERT on "
+                        "BROOKS_INTRADAY_ADVISER_* tables). Deploy migration "
+                        "20260808_brooks_adviser_v1_ui_api_grants.sql and restart the UI API."
+                    ),
+                },
+            )
+        return JSONResponse(status_code=500, content={"detail": msg or "Validation run failed."})
+
+
+@router.get("/runs/{run_id}/trade-learning-g1")
+def get_trade_learning_g1(
+    run_id: str,
+    context_attempt_id: str,
+    simulation_attempt_id: str,
+    symbol: str,
+    trading_date: date,
+    replay_through_ts: str | None = None,
+    diagnostic_legacy: bool = Query(False, alias="diagnostic_legacy"),
+) -> dict:
+    from . import learning_service
+
+    return learning_service.get_trade_learning_g1(
+        run_id,
+        context_attempt_id=context_attempt_id,
+        simulation_attempt_id=simulation_attempt_id,
+        symbol=symbol,
+        trading_date=trading_date,
+        replay_through_ts=replay_through_ts,
+        diagnostic_legacy=diagnostic_legacy,
+    )
 
 
 @router.get("/experiments/ruleset-freeze")

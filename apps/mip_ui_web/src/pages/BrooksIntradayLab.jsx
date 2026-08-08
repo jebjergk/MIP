@@ -7,6 +7,16 @@ import {
   initialLabNavigationState,
   reduceLabNavigation,
 } from './brooksLabNavigation'
+import {
+  filterSimulationEventsForWorkspace,
+  sanitizeChartBarSimulation,
+  sanitizeGridSimulationEffect,
+} from './brooksReviewProvenance'
+import {
+  parseTradeReviewHash,
+  planTradeManagementReviewOpen,
+  shouldShowTradeReviewPanel,
+} from './brooksTradeManagementReview'
 import './BrooksIntradayLab.css'
 
 const API = `${API_BASE}/research/brooks-intraday`
@@ -136,7 +146,13 @@ function formatTradeEventMoney(ev) {
   return ''
 }
 
-export default function BrooksIntradayLab() {
+function BrooksIntradayLab({
+  sharedReview,
+  sharedBarTs,
+  onSharedReviewChange,
+  onSharedBarTsChange,
+  shellControlled = false,
+}) {
   const [metaBanner, setMetaBanner] = useState('SIMULATION ONLY — NO REAL ORDERS OR PORTFOLIO CONNECTION')
   const [weekStart, setWeekStart] = useState('')
   const [symbolsText, setSymbolsText] = useState(DEFAULT_SYMBOLS.join(', '))
@@ -196,10 +212,12 @@ export default function BrooksIntradayLab() {
   const [reviewChainOverride, setReviewChainOverride] = useState(null)
   const [reviewChainOptions, setReviewChainOptions] = useState(null)
   const [reviewTrades, setReviewTrades] = useState([])
+  const [symbolOverlayWarning, setSymbolOverlayWarning] = useState(null)
   const [selectedTradeMgmt, setSelectedTradeMgmt] = useState(null)
   const [tradeMgmtReview, setTradeMgmtReview] = useState(null)
   const [tradeMgmtLoading, setTradeMgmtLoading] = useState(false)
   const reviewSummaryRef = useRef(null)
+  const tradeMgmtReviewRef = useRef(null)
   const provenanceRef = useRef(null)
   // One-shot locator scroll intent — never revived by data refreshes / re-renders.
   const labNavRef = useRef(initialLabNavigationState())
@@ -321,6 +339,7 @@ export default function BrooksIntradayLab() {
     setReviewTrades([])
     setSelectedTradeMgmt(null)
     setTradeMgmtReview(null)
+    setSymbolOverlayWarning(null)
     labNavRef.current = reduceLabNavigation(labNavRef.current, { type: 'PAGE_RELOAD' })
     if (symbols.length && !symbols.includes(activeSymbol)) {
       setActiveSymbol(symbols[0])
@@ -340,7 +359,9 @@ export default function BrooksIntradayLab() {
       }
       setRun(payload)
       setLoadRunId(id)
-      resetReviewStateForRun(payload)
+      if (!shellControlled) {
+        resetReviewStateForRun(payload)
+      }
       const weekStart = payload?.selected_week_start || payload?.configuration?.selected_week_start
       const weekEnd = payload?.selected_week_end || payload?.configuration?.selected_week_end
       setLoadedRunBanner(
@@ -351,8 +372,8 @@ export default function BrooksIntradayLab() {
       const chainsResp = await fetch(`${API}/runs/${id}/review-chains`)
       const chains = await chainsResp.json().catch(() => ({}))
       if (chainsResp.ok) setReviewChainOptions(chains)
-      await refreshReplay(id, null)
-      if (reviewSummaryRef.current?.scrollIntoView) {
+      await refreshReplay(id, shellControlled ? reviewChainOverride : null)
+      if (!shellControlled && reviewSummaryRef.current?.scrollIntoView) {
         reviewSummaryRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     } catch (err) {
@@ -432,9 +453,10 @@ export default function BrooksIntradayLab() {
     }
   }
 
-  const fetchLearning = useCallback(async (runId, sym, mode, override = undefined) => {
+  const fetchLearning = useCallback(async (runId, sym, mode, override = undefined, tradingDateOverride = undefined) => {
     if (!runId || !sym) return
-    const td = matrixDate ? `&trading_date=${encodeURIComponent(matrixDate)}` : ''
+    const activeDate = tradingDateOverride || matrixDate
+    const td = activeDate ? `&trading_date=${encodeURIComponent(activeDate)}` : ''
     const f = learningFilters
     const fq = [
       f.action_changed_only ? 'action_changed_only=true' : '',
@@ -448,10 +470,12 @@ export default function BrooksIntradayLab() {
         `&simulation_attempt_id=${encodeURIComponent(activeOverride.simulation_attempt_id)}`
       )
       : ''
-    const timelineQs = chainQs ? `?${chainQs.slice(1)}` : ''
+    const timelineQs = chainQs
+      ? `?${chainQs.slice(1)}&symbol=${encodeURIComponent(sym)}`
+      : `?symbol=${encodeURIComponent(sym)}`
     const symQs = `mode=${encodeURIComponent(mode)}&offset=0&limit=500${td}${fq ? `&${fq}` : ''}${chainQs}`
     const [lvResp, lsResp, certResp, tlResp] = await Promise.all([
-      fetch(`${API}/runs/${runId}/learning-view?mode=${encodeURIComponent(mode)}&active_symbol=${encodeURIComponent(sym)}${td ? `&trading_date=${encodeURIComponent(matrixDate)}` : ''}${chainQs}`),
+      fetch(`${API}/runs/${runId}/learning-view?mode=${encodeURIComponent(mode)}&active_symbol=${encodeURIComponent(sym)}${td ? `&trading_date=${encodeURIComponent(activeDate)}` : ''}${chainQs}`),
       fetch(`${API}/runs/${runId}/symbols/${encodeURIComponent(sym)}/learning-view?${symQs}`),
       fetch(`${API}/runs/${runId}/certification-summary`),
       fetch(`${API}/runs/${runId}/account-timeline${timelineQs}`),
@@ -492,9 +516,16 @@ export default function BrooksIntradayLab() {
     }
     if (certResp.ok) setCertification(cert)
     if (tlResp.ok) {
+      const simId = activeOverride?.simulation_attempt_id
+        || lv?.provenance?.attempt_chain?.simulation_attempt_id
       setReviewTrades(
-        (tl.events || []).filter((e) => e.kind === 'TRADE_ENTRY' || e.kind === 'TRADE_EXIT'),
+        filterSimulationEventsForWorkspace(
+          (tl.events || []).filter((e) => e.kind === 'TRADE_ENTRY' || e.kind === 'TRADE_EXIT'),
+          sym,
+          simId,
+        ),
       )
+      setSymbolOverlayWarning(null)
     } else {
       setReviewTrades([])
     }
@@ -518,6 +549,63 @@ export default function BrooksIntradayLab() {
       /* ignore polling errors */
     }
   }, [activeSymbol, fetchLearning, reviewMode, learningSymbol?.chart_bars?.length])
+
+  const applySharedReview = useCallback(async (sr, barTs) => {
+    if (!sr?.runId) return
+    setLoadRunId(sr.runId)
+    const override = {
+      context_attempt_id: sr.contextAttemptId,
+      simulation_attempt_id: sr.simulationAttemptId,
+    }
+    setReviewChainOverride(override)
+    setActiveSymbol(sr.symbol)
+    setMatrixDate(sr.tradingDate)
+    if (barTs) setSelectedBarTs(barTs)
+    else setSelectedBarTs(null)
+    setLoading(true)
+    setError('')
+    try {
+      if (run?.run_id !== sr.runId) {
+        const resp = await fetch(`${API}/runs/${sr.runId}`)
+        const payload = await resp.json().catch(() => ({}))
+        if (!resp.ok) {
+          throw new Error(payload?.detail || `Failed to load run (${resp.status})`)
+        }
+        setRun(payload)
+        const chainsResp = await fetch(`${API}/runs/${sr.runId}/review-chains`)
+        const chains = await chainsResp.json().catch(() => ({}))
+        if (chainsResp.ok) setReviewChainOptions(chains)
+      }
+      await refreshReplay(sr.runId, override)
+      const mode = reviewMode === 'replay' ? 'replay' : 'full'
+      await fetchLearning(sr.runId, sr.symbol, mode, override, sr.tradingDate)
+    } catch (err) {
+      setError(err?.message || 'Could not sync review selection.')
+    } finally {
+      setLoading(false)
+    }
+  }, [run, refreshReplay, fetchLearning, reviewMode])
+
+  useEffect(() => {
+    if (!shellControlled || !sharedReview?.runId) return
+    applySharedReview(sharedReview, sharedBarTs)
+  }, [
+    shellControlled,
+    sharedReview?.runId,
+    sharedReview?.contextAttemptId,
+    sharedReview?.simulationAttemptId,
+    sharedReview?.symbol,
+    sharedReview?.tradingDate,
+    sharedBarTs,
+    applySharedReview,
+  ])
+
+  useEffect(() => {
+    if (!shellControlled || !onSharedBarTsChange) return
+    if (selectedBarTs && selectedBarTs !== sharedBarTs) {
+      onSharedBarTsChange(selectedBarTs)
+    }
+  }, [shellControlled, selectedBarTs, sharedBarTs, onSharedBarTsChange])
 
   const contextByTs = useMemo(() => {
     const m = {}
@@ -558,28 +646,70 @@ export default function BrooksIntradayLab() {
     return null
   }, [reviewChainOverride, learningRun, experimentTrades])
 
-  const loadTradeManagementReview = useCallback(async (trade) => {
-    if (!run?.run_id || !trade?.trade_id) return
-    const ctxId = trade.context_attempt_id || activeAttemptChain?.context_attempt_id
-    const simId = trade.simulation_attempt_id || activeAttemptChain?.simulation_attempt_id
-    if (!ctxId || !simId) {
-      setTradeMgmtReview({ error: 'Select a run with a resolved context/simulation attempt chain.' })
+  const openTradeManagementReview = useCallback(async (trade) => {
+    const plan = planTradeManagementReviewOpen(trade, {
+      activeSymbol,
+      reviewChainOverride,
+    })
+    const sym = plan.workspaceSymbol
+
+    if (!run?.run_id) {
+      setSelectedTradeMgmt(trade || null)
+      setTradeMgmtReview({ error: 'Load a run before opening trade management review.' })
       return
     }
+    if (!trade?.trade_id) {
+      setSelectedTradeMgmt(trade || null)
+      setTradeMgmtReview({ error: 'Trade row is missing trade_id; cannot load management review.' })
+      return
+    }
+
     setSelectedTradeMgmt(trade)
     setTradeMgmtLoading(true)
     setTradeMgmtReview(null)
+    if (sym) {
+      setActiveSymbol(sym)
+      setSymbolOverlayWarning(null)
+    }
+    if (plan.chainOverride?.context_attempt_id && plan.chainOverride?.simulation_attempt_id) {
+      setReviewChainOverride(plan.chainOverride)
+      labNavRef.current = reduceLabNavigation(labNavRef.current, {
+        type: 'REVIEW_CHAIN_CHANGED',
+        override: plan.chainOverride,
+      })
+    }
+    if (plan.hash && typeof window !== 'undefined') {
+      const base = `${window.location.pathname}${window.location.search}`
+      window.history.replaceState(null, '', `${base}${plan.hash}`)
+    }
+    const scrollToReview = () => {
+      tradeMgmtReviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    requestAnimationFrame(scrollToReview)
+
+    const ctxId = trade.context_attempt_id || plan.chainOverride?.context_attempt_id
+      || activeAttemptChain?.context_attempt_id
+    const simId = trade.simulation_attempt_id || plan.chainOverride?.simulation_attempt_id
+      || activeAttemptChain?.simulation_attempt_id
+    if (!ctxId || !simId) {
+      setTradeMgmtLoading(false)
+      setTradeMgmtReview({ error: 'Select a run with a resolved context/simulation attempt chain.' })
+      return
+    }
+
     try {
       const qs = new URLSearchParams({
         context_attempt_id: ctxId,
         simulation_attempt_id: simId,
+        workspace_symbol: sym || trade.symbol,
       })
       const resp = await fetch(
         `${API}/runs/${run.run_id}/sim-trades/${encodeURIComponent(trade.trade_id)}/management-review?${qs}`,
       )
       const body = await resp.json().catch(() => ({}))
       if (!resp.ok) {
-        setTradeMgmtReview({ error: body?.detail || 'Trade management review failed' })
+        const detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail || body)
+        setTradeMgmtReview({ error: detail || 'Trade management review failed' })
       } else {
         setTradeMgmtReview(body)
       }
@@ -587,8 +717,67 @@ export default function BrooksIntradayLab() {
       setTradeMgmtReview({ error: err?.message || 'Trade management review failed' })
     } finally {
       setTradeMgmtLoading(false)
+      requestAnimationFrame(scrollToReview)
     }
-  }, [run?.run_id, activeAttemptChain])
+  }, [run?.run_id, activeAttemptChain, activeSymbol, reviewChainOverride])
+
+  const loadTradeManagementReview = openTradeManagementReview
+
+  const workspaceGridRows = useMemo(() => {
+    const rows = learningSymbol?.grid_rows || []
+    return rows.map((row) => {
+      const { simulation_effect } = sanitizeGridSimulationEffect(row, activeSymbol)
+      if (simulation_effect === row.simulation_effect) return row
+      return { ...row, simulation_effect }
+    })
+  }, [learningSymbol?.grid_rows, activeSymbol])
+
+  const workspaceChartBars = useMemo(() => {
+    const bars = learningSymbol?.chart_bars?.length ? learningSymbol.chart_bars : visibleBars
+    return (bars || []).map((b) => {
+      const { simulation_effect } = sanitizeChartBarSimulation(
+        { ...b, bar_ts: b.ts_utc },
+        activeSymbol,
+      )
+      if (simulation_effect === b.simulation_effect) return b
+      return { ...b, simulation_effect }
+    })
+  }, [learningSymbol?.chart_bars, visibleBars, activeSymbol])
+
+  useEffect(() => {
+    if (tradeMgmtLoading) return undefined
+    if (
+      selectedTradeMgmt
+      && String(selectedTradeMgmt.symbol || '').toUpperCase() !== String(activeSymbol || '').toUpperCase()
+    ) {
+      setSelectedTradeMgmt(null)
+      setTradeMgmtReview(null)
+    }
+    return undefined
+  }, [activeSymbol, selectedTradeMgmt, tradeMgmtLoading])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !experimentTrades.length) return undefined
+    const tradeId = parseTradeReviewHash(window.location.hash)
+    if (!tradeId) return undefined
+    const trade = experimentTrades.find((t) => String(t.trade_id) === String(tradeId))
+    if (trade && !selectedTradeMgmt && !tradeMgmtLoading) {
+      openTradeManagementReview(trade)
+    }
+    return undefined
+  }, [experimentTrades, openTradeManagementReview, selectedTradeMgmt, tradeMgmtLoading])
+
+  const applyReviewChainSelection = useCallback((override) => {
+    const { state } = applyReviewChainChange(labNavRef.current, override)
+    labNavRef.current = state
+    setSelectedBarTs(null)
+    setSelectedPattern(null)
+    setPatternDetail(null)
+    setSelectedTradeMgmt(null)
+    setTradeMgmtReview(null)
+    setSymbolOverlayWarning(null)
+    setReviewChainOverride(override)
+  }, [])
 
   const refreshRun = useCallback(async (runId) => {
     const resp = await fetch(`${API}/runs/${runId}`)
@@ -628,15 +817,6 @@ export default function BrooksIntradayLab() {
     const el = gridRowRefs.current[key]
     if (el?.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [patternsCatalog])
-
-  const applyReviewChainSelection = useCallback((override) => {
-    const { state } = applyReviewChainChange(labNavRef.current, override)
-    labNavRef.current = state
-    setSelectedBarTs(null)
-    setSelectedPattern(null)
-    setPatternDetail(null)
-    setReviewChainOverride(override)
-  }, [])
 
   const runPatternReset = async () => {
     if (!run?.run_id) return
@@ -823,15 +1003,12 @@ export default function BrooksIntradayLab() {
   }, [run?.run_id, activeSymbol, refreshReplay, reviewMode, learningFilters, phase9?.overall_status, reviewChainOverride])
 
   const selectedGridRow = useMemo(() => {
-    if (!learningSymbol?.grid_rows?.length || !selectedBarTs) return null
+    if (!workspaceGridRows.length || !selectedBarTs) return null
     const key = String(selectedBarTs).slice(0, 19)
-    return learningSymbol.grid_rows.find((r) => String(r.bar_ts).slice(0, 19) === key) || null
-  }, [learningSymbol, selectedBarTs])
+    return workspaceGridRows.find((r) => String(r.bar_ts).slice(0, 19) === key) || null
+  }, [workspaceGridRows, selectedBarTs])
 
-  const chartBarsForDisplay = useMemo(() => {
-    if (learningSymbol?.chart_bars?.length) return learningSymbol.chart_bars
-    return visibleBars
-  }, [learningSymbol, visibleBars])
+  const chartBarsForDisplay = workspaceChartBars
 
   const accountSummary = learningRun?.account_summary
 
@@ -1152,6 +1329,7 @@ export default function BrooksIntradayLab() {
                               context_attempt_id: alt.context_attempt_id,
                               simulation_attempt_id: alt.simulation_attempt_id,
                               context_ruleset: alt.context_ruleset,
+                              simulation_ruleset: alt.simulation_ruleset,
                             }
                             : { context_attempt_id: ctx, simulation_attempt_id: sim },
                         )
@@ -1554,40 +1732,76 @@ export default function BrooksIntradayLab() {
                 </tbody>
               </table>
             </div>
-            {selectedTradeMgmt ? (
-              <section className="bil-trade-mgmt-review" aria-labelledby="bil-trade-mgmt-heading">
-                <h3 id="bil-trade-mgmt-heading">Trade management review (read-only)</h3>
+            {shouldShowTradeReviewPanel({
+              selectedTrade: selectedTradeMgmt,
+              loading: tradeMgmtLoading,
+              review: tradeMgmtReview,
+            }) ? (
+              <section
+                className="bil-trade-mgmt-review bil-trade-mgmt-review--open"
+                id="bil-trade-mgmt-review"
+                ref={tradeMgmtReviewRef}
+                aria-labelledby="bil-trade-mgmt-heading"
+              >
+                <h3 id="bil-trade-mgmt-heading">
+                  Trade management review — {selectedTradeMgmt?.symbol || tradeMgmtReview?.symbol || '…'}
+                </h3>
                 {tradeMgmtLoading ? (
-                  <p className="bil-note">Loading…</p>
+                  <p className="bil-note bil-trade-mgmt-status" role="status">Loading trade review…</p>
                 ) : tradeMgmtReview?.error ? (
-                  <p className="bil-note">{tradeMgmtReview.error}</p>
+                  <p className="bil-note bil-p9-warn bil-trade-mgmt-status" role="alert">{tradeMgmtReview.error}</p>
                 ) : tradeMgmtReview ? (
                   <>
-                    <dl className="bil-dl-compact">
-                      <div><dt>Symbol</dt><dd>{tradeMgmtReview.symbol}</dd></div>
+                    <dl className="bil-dl-compact bil-trade-mgmt-summary">
                       <div><dt>Entry</dt><dd>{String(tradeMgmtReview.entry_ts || '').slice(0, 19)} @ {tradeMgmtReview.entry_price}</dd></div>
-                      <div><dt>Quantity</dt><dd>{tradeMgmtReview.quantity ?? '—'}</dd></div>
-                      <div><dt>Initial stop</dt><dd>{tradeMgmtReview.initial_stop?.display ?? '—'}</dd></div>
-                      <div><dt>Current stop</dt><dd>{tradeMgmtReview.current_stop?.display ?? '—'}</dd></div>
-                      <div><dt>MFE</dt><dd>{tradeMgmtReview.mfe ?? '—'}</dd></div>
-                      <div><dt>MAE</dt><dd>{tradeMgmtReview.mae ?? '—'}</dd></div>
-                      <div><dt>Peak unrealized P/L</dt><dd>
-                        {tradeMgmtReview.max_unrealized_pnl != null
-                          ? `${formatMoney(tradeMgmtReview.max_unrealized_pnl)} @ ${String(tradeMgmtReview.max_unrealized_pnl_ts || '').slice(0, 19)} (high ${tradeMgmtReview.max_unrealized_pnl_price})`
-                          : '—'}
-                      </dd></div>
                       <div><dt>Exit</dt><dd>{String(tradeMgmtReview.exit_ts || '').slice(0, 19)} @ {tradeMgmtReview.exit_price}</dd></div>
                       <div><dt>Exit reason</dt><dd>{tradeMgmtReview.exit_reason}</dd></div>
                       <div><dt>Realized P/L</dt><dd>{formatMoney(tradeMgmtReview.realized_pnl)}</dd></div>
+                      <div><dt>Active ruleset</dt><dd><code>{tradeMgmtReview.active_exit_rules?.simulation_ruleset_version || '—'}</code></dd></div>
+                      <div><dt>Simulation attempt</dt><dd><code>{tradeMgmtReview.simulation_attempt_id || selectedTradeMgmt?.simulation_attempt_id || '—'}</code></dd></div>
+                      <div><dt>Quantity</dt><dd>{tradeMgmtReview.quantity ?? '—'}</dd></div>
+                      <div><dt>Initial stop</dt><dd>{tradeMgmtReview.initial_stop?.display ?? '—'}</dd></div>
+                      <div><dt>Current stop</dt><dd>{tradeMgmtReview.current_stop?.display ?? '—'}</dd></div>
                     </dl>
-                    <p className="bil-note"><strong>Active exit rules</strong> ({tradeMgmtReview.active_exit_rules?.simulation_ruleset_version})</p>
+                    <p className="bil-note"><strong>Active exit rules</strong></p>
                     <ul className="bil-timeline-list">
                       {(tradeMgmtReview.active_exit_rules?.exit_rules || []).map((line) => (
                         <li key={line}>{line}</li>
                       ))}
                     </ul>
+                    <h4 className="bil-trade-mgmt-ledger-heading">PM management ledger (chronological)</h4>
+                    {tradeMgmtReview.management_ledger_chronological?.length ? (
+                      <ul className="bil-timeline-list bil-mgmt-ledger">
+                        {tradeMgmtReview.management_ledger_chronological.map((ev, i) => (
+                          <li key={`${ev.event}-${ev.ts}-${i}`}>
+                            <code>{ev.event}</code> {String(ev.ts || '').slice(0, 19)}
+                            {ev.stop_price != null ? ` · stop ${ev.stop_price}` : ''}
+                            {ev.new_stop != null ? ` · → ${ev.new_stop}` : ''}
+                            {ev.exit_reason ? ` · ${ev.exit_reason}` : ''}
+                            {ev.precedence ? ` · ${ev.precedence}` : ''}
+                            {ev.realized_pnl != null ? ` · P/L ${ev.realized_pnl}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="bil-note">No PM ledger events for this attempt (V0_1 sim or ledger file missing on API host).</p>
+                    )}
+                    <details className="bil-note">
+                      <summary>MFE / MAE (review only)</summary>
+                      <dl className="bil-dl-compact">
+                        <div><dt>MFE</dt><dd>{tradeMgmtReview.mfe ?? '—'}</dd></div>
+                        <div><dt>MAE</dt><dd>{tradeMgmtReview.mae ?? '—'}</dd></div>
+                        <div><dt>Peak unrealized P/L</dt><dd>
+                          {tradeMgmtReview.max_unrealized_pnl != null
+                            ? `${formatMoney(tradeMgmtReview.max_unrealized_pnl)} @ ${String(tradeMgmtReview.max_unrealized_pnl_ts || '').slice(0, 19)}`
+                            : '—'}
+                        </dd></div>
+                      </dl>
+                    </details>
                   </>
-                ) : null}
+                ) : (
+                  <p className="bil-note bil-trade-mgmt-status">Select Review on a trade row to load management data.</p>
+                )}
               </section>
             ) : null}
           </section>
@@ -1709,6 +1923,9 @@ export default function BrooksIntradayLab() {
 
           <section className="bil-workspace" aria-labelledby="bil-workspace-heading">
             <h2 id="bil-workspace-heading">Symbol workspace — {activeSymbol}</h2>
+            {symbolOverlayWarning ? (
+              <p className="bil-note bil-p9-warn" role="status">{symbolOverlayWarning}</p>
+            ) : null}
             <div className="bil-symbol-tabs" role="tablist">
               {(run.symbols || DEFAULT_SYMBOLS).map((sym) => (
                 <button
@@ -1717,7 +1934,10 @@ export default function BrooksIntradayLab() {
                   role="tab"
                   aria-selected={sym === activeSymbol}
                   className={sym === activeSymbol ? 'active' : ''}
-                  onClick={() => setActiveSymbol(sym)}
+                  onClick={() => {
+                    setSymbolOverlayWarning(null)
+                    setActiveSymbol(sym)
+                  }}
                 >
                   {sym}
                 </button>
@@ -1890,7 +2110,7 @@ export default function BrooksIntradayLab() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(learningSymbol?.grid_rows || observations).map((row) => {
+                      {(workspaceGridRows.length ? workspaceGridRows : observations).map((row) => {
                         const ts = row.bar_ts || row.bar_ts_utc
                         const ohlcv = row.ohlcv || {}
                         const pats = row.active_patterns || row.pattern_snapshot_json || []
@@ -2110,3 +2330,6 @@ export default function BrooksIntradayLab() {
     </div>
   )
 }
+
+export default BrooksIntradayLab
+export { BrooksIntradayLab as BrooksIntradayTechnicalView }

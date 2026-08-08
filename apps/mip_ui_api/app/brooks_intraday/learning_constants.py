@@ -4,6 +4,32 @@ from __future__ import annotations
 
 PILOT_RUN_ID = "4eababc8-88fe-4ebc-b47c-b65f6ec10c74"
 
+# Phase E1 validation week — review-only PM certification (does not change run pins).
+PHASE_E1_VALIDATION_RUN_ID = "6d5e883b-eacf-4730-aed7-f9dd3bb1eb0e"
+PHASE_E1_CONTEXT_ATTEMPT_ID = "3defa3de-d699-424a-8ceb-78020b453284"
+PHASE_E1_SIMULATION_ATTEMPT_ID = "8de2e63f-99f8-46ed-a2ec-f5b8c321c651"
+PM_V01_CERT_SIMULATION_ATTEMPT_ID = "125eb282-3dc7-41a7-8fbf-602f75ad6b51"
+PM_V01_OBSOLETE_CERT_SIMULATION_ATTEMPT_ID = "5aa3cd99-b11d-4ba6-b061-4a4f098d4140"
+
+REVIEW_CHAIN_SUPPLEMENTS: dict[str, list[dict[str, str | bool | float | int | None]]] = {
+    PHASE_E1_VALIDATION_RUN_ID: [
+        {
+            "label": (
+                "BROOKS_POSITION_MANAGEMENT_RULESET_V0_1 · canonical PM certification · "
+                "sim 125eb282… · P/L +$6.88"
+            ),
+            "context_attempt_id": PHASE_E1_CONTEXT_ATTEMPT_ID,
+            "simulation_attempt_id": PM_V01_CERT_SIMULATION_ATTEMPT_ID,
+            "context_ruleset": "BROOKS_CONTEXT_RULESET_V0_3",
+            "simulation_ruleset": "BROOKS_POSITION_MANAGEMENT_RULESET_V0_1",
+            "trade_count": 1,
+            "realized_pnl": 6.88,
+            "canonical_pm_certification": True,
+            "notes": "Inactive PM ruleset; V0_1 entries only.",
+        },
+    ],
+}
+
 OFFICIAL_ATTEMPT_CHAIN: dict[str, dict[str, str]] = {
     PILOT_RUN_ID: {
         "objective_attempt_id": "53a502f5-dec4-4bff-8106-f6637574163e",

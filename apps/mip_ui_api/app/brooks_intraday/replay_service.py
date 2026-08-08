@@ -155,9 +155,9 @@ def get_observations_for_symbol(run_id: str, symbol: str, *, review_filter: str 
     }
 
 
-def reset_pattern_run(run_id: str) -> SimpleStatusResponse:
+def reset_pattern_run(run_id: str, *, allow_diagnostic_legacy: bool = False) -> SimpleStatusResponse:
     try:
-        updated = store.reset_pattern_run(run_id)
+        updated = store.reset_pattern_run(run_id, allow_diagnostic_legacy=allow_diagnostic_legacy)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}") from exc
     return SimpleStatusResponse(

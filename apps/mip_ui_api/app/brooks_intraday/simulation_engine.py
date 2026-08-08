@@ -10,6 +10,12 @@ from typing import Any
 from .bars import HistoricalBar
 from .context_ruleset_v01 import ACTION_CONSIDER_ENTRY, ACTION_THESIS_INVALIDATED
 from .simulation_ruleset_v01 import resolve_params
+from .reentry_policy_v01 import (
+    note_reentry_entry_consumed,
+    note_reentry_exit,
+    observe_reentry_context_bar,
+    setup_cycle_id_from_context,
+)
 
 BLOCK_REASON_POSITION_OPEN = "VALID_SIGNAL_POSITION_ALREADY_OPEN"
 BLOCK_REASON_TIE_BREAK = "TIE_BREAK_LOSER"
@@ -138,7 +144,12 @@ def tie_break_pick(
     return ranked[0], ranked[1:]
 
 
-def fill_pending_exit(portfolio: PortfolioSimState, *, bar: HistoricalBar) -> SimulationStepResult | None:
+def fill_pending_exit(
+    portfolio: PortfolioSimState,
+    *,
+    bar: HistoricalBar,
+    bar_index_in_session: int | None = None,
+) -> SimulationStepResult | None:
     if not portfolio.pending_exit or portfolio.pending_exit.symbol != bar.symbol.upper():
         return None
     pos = portfolio.open_position
@@ -170,6 +181,13 @@ def fill_pending_exit(portfolio: PortfolioSimState, *, bar: HistoricalBar) -> Si
     portfolio.open_position = None
     reason = portfolio.pending_exit.reason
     portfolio.pending_exit = None
+    note_reentry_exit(
+        portfolio,
+        symbol=bar.symbol.upper(),
+        trading_date=bar.trading_date,
+        bar_index_in_session=bar_index_in_session if bar_index_in_session is not None else 0,
+        exit_reason=reason,
+    )
     return SimulationStepResult(
         symbol=bar.symbol,
         bar_ts=bar.ts_utc,
@@ -223,6 +241,13 @@ def process_symbol_bar(
                 portfolio.open_position = None
                 result.exit_filled = True
                 result.notes.append(f"eod_exit@{fill_price}")
+                note_reentry_exit(
+                    portfolio,
+                    symbol=sym,
+                    trading_date=bar.trading_date,
+                    bar_index_in_session=bar_index_in_session,
+                    exit_reason=exit_reason,
+                )
             else:
                 portfolio.pending_exit = PendingExit(
                     trade_id=portfolio.open_position.trade_id,
@@ -283,6 +308,12 @@ def execute_entry(
     )
     portfolio.cash -= cost
     portfolio.open_position = pos
+    note_reentry_entry_consumed(
+        portfolio,
+        symbol=bar.symbol.upper(),
+        trading_date=bar.trading_date,
+        setup_cycle_id=setup_cycle_id_from_context(ctx),
+    )
     return True
 
 

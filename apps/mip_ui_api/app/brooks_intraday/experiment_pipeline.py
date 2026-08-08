@@ -47,9 +47,11 @@ def _require_bar_completeness(state: dict[str, Any]) -> None:
 def run_analysis_chain(state: dict[str, Any]) -> dict[str, str]:
     """Objective → pattern V0.3 → context V0.2 → simulation V0.1 (bulk)."""
     from . import store
+    from .lab_execution_policy import legacy_pipeline_env_enabled
 
+    allow = legacy_pipeline_env_enabled()
     run_id = state["run_id"]
-    obj_id = run_objective_replay_bulk(state, progress_every=50)
+    obj_id = run_objective_replay_bulk(state, progress_every=50, allow_diagnostic_legacy=allow)
     state["phase4_review_baseline_attempt_id"] = obj_id
     state.setdefault("configuration", {})["phase4_review_baseline_attempt_id"] = obj_id
 
@@ -58,17 +60,17 @@ def run_analysis_chain(state: dict[str, Any]) -> dict[str, str]:
     state.setdefault("configuration", {})["pattern_ruleset_version"] = PATTERN_V03
     state.setdefault("configuration", {})["ruleset_version"] = PATTERN_V03
     state.pop("_pattern_session_state", None)
-    pat_id = run_pattern_replay_bulk(state, progress_every=50)
+    pat_id = run_pattern_replay_bulk(state, progress_every=50, allow_diagnostic_legacy=allow)
     state["phase5_pattern_v03_attempt_id"] = pat_id
     state.setdefault("configuration", {})["phase5_pattern_v03_attempt_id"] = pat_id
 
-    ctx_out = store.run_context_bulk_v02(run_id)
+    ctx_out = store.run_context_bulk_v02(run_id, allow_diagnostic_legacy=allow)
     ctx_id = str(ctx_out["context_attempt_id"])
 
     with store._lock:
         state = store._runs[run_id]
 
-    sim_out = store.run_simulation_bulk(run_id, context_attempt_id=ctx_id)
+    sim_out = store.run_simulation_bulk(run_id, context_attempt_id=ctx_id, allow_diagnostic_legacy=allow)
     sim_id = str(sim_out.get("simulation_attempt_id") or "")
     return {
         "objective_attempt_id": obj_id,

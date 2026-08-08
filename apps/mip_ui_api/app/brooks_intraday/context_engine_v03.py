@@ -114,6 +114,8 @@ class V03SessionState:
     gap_acceptance_closes: int = 0
     confirmation_score: int = 0
     entry_armed_bar: int | None = None
+    setup_cycle_seq: int = 0
+    current_setup_cycle_id: str | None = None
     dnc_active: bool = False
     post_break_high: float | None = None
     post_break_low: float | None = None
@@ -700,11 +702,22 @@ def may_emit_consider_entry_v03(
 
 
 def _arm_entry_on_bar(sess: V03SessionState, bar_index_in_session: int, state_before: str) -> None:
+    from .reentry_policy_v01 import format_setup_cycle_id
+
     _set_state(sess, STATE_ENTRY_ARMED, bar_index_in_session)
     if state_before != STATE_ENTRY_ARMED:
         sess.entry_armed_bar = bar_index_in_session
+        sess.setup_cycle_seq += 1
+        sess.current_setup_cycle_id = format_setup_cycle_id(
+            sess.symbol, sess.trading_date, sess.setup_cycle_seq
+        )
     elif sess.entry_armed_bar is None:
         sess.entry_armed_bar = bar_index_in_session
+        if not sess.current_setup_cycle_id:
+            sess.setup_cycle_seq += 1
+            sess.current_setup_cycle_id = format_setup_cycle_id(
+                sess.symbol, sess.trading_date, sess.setup_cycle_seq
+            )
 
 
 def advance_context_v03_for_bar(
@@ -1560,6 +1573,8 @@ def _result(
             "blockers": list(blockers),
             "dnc_active": sess.dnc_active,
             "entry_armed_bar": sess.entry_armed_bar,
+            "setup_cycle_id": sess.current_setup_cycle_id,
+            "setup_cycle_seq": sess.setup_cycle_seq,
             "gap_above_open": sess.gap_above_open,
             "last_entry_bar_index_in_session": LAST_ENTRY_BAR_INDEX_IN_SESSION,
         },

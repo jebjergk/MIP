@@ -115,6 +115,33 @@ class TradeManagementReviewTests(unittest.TestCase):
         self.assertEqual(review["initial_stop"]["simulator_enforcement"], "stored_only_not_checked")
         self.assertEqual(review["exit_reason"], "FORCED_END_OF_DAY_EXIT")
 
+    @patch("app.brooks_intraday.trade_management_review.load_context_observations")
+    @patch("app.brooks_intraday.trade_management_review.load_simulation_attempt")
+    @patch("app.brooks_intraday.trade_management_review.load_sim_trades")
+    def test_management_review_rejects_workspace_symbol_mismatch(
+        self, mock_trades, mock_attempt, mock_ctx
+    ):
+        mock_trades.return_value = [
+            {
+                "trade_id": TRADE_ID,
+                "symbol": "AMZN",
+                "simulation_attempt_id": SIM,
+                "entry_ts": "2026-07-13T14:25:00",
+                "quantity": 4,
+            }
+        ]
+        mock_attempt.return_value = {"simulation_ruleset_version": "BROOKS_SIMULATION_RULESET_V0_1"}
+        mock_ctx.return_value = []
+        with self.assertRaises(ValueError) as err:
+            build_trade_management_review(
+                RUN_ID,
+                TRADE_ID,
+                context_attempt_id=CTX,
+                simulation_attempt_id=SIM,
+                workspace_symbol="AAPL",
+            )
+        self.assertIn("workspace symbol", str(err.exception).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

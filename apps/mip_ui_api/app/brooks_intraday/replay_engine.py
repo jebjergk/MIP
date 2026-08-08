@@ -467,12 +467,16 @@ def run_pattern_replay_bulk(
     progress_every: int = 50,
     commit_every: int = 20,  # noqa: ARG001 — kept for API compatibility
     on_progress: Any | None = None,
+    allow_diagnostic_legacy: bool = False,
 ) -> str:
     """
     Run a full pattern ruleset replay with batched Snowflake writes.
     Intended for agent validation scripts (not interactive step API).
     """
     verify_replay_ready(state)
+    from .lab_execution_policy import require_diagnostic_legacy
+
+    require_diagnostic_legacy(state, "phase5_pattern_bulk", allow_diagnostic_legacy=allow_diagnostic_legacy)
     verify_schedule_bars(state)
     rs = state.get("ruleset_version") or state.get("configuration", {}).get("ruleset_version")
     if not is_pattern_ruleset(rs):
@@ -725,9 +729,13 @@ def run_objective_replay_bulk(
     progress_every: int = 50,
     commit_every: int = 400,
     on_progress: Any | None = None,
+    allow_diagnostic_legacy: bool = False,
 ) -> str:
     """Full-week objective observation replay with batched persistence."""
     verify_replay_ready(state)
+    from .lab_execution_policy import require_diagnostic_legacy
+
+    require_diagnostic_legacy(state, "phase4_objective_bulk", allow_diagnostic_legacy=allow_diagnostic_legacy)
     verify_schedule_bars(state)
     state.pop("_obs_session_state", None)
     cursor = default_cursor(state)
@@ -997,6 +1005,9 @@ def process_next_bar(state: dict[str, Any], *, request_token: str | None = None)
         schedule = _schedule_cache(state)
         rs = state.get("ruleset_version") or state.get("configuration", {}).get("ruleset_version")
         if is_pattern_ruleset(rs) or state.get("replay_mode") == "PATTERN":
+            from .lab_execution_policy import require_diagnostic_legacy
+
+            require_diagnostic_legacy(state, "phase5_pattern_next_bar")
             attempt_id = ensure_pattern_replay_attempt(state, force_new=False)
         else:
             attempt_id = ensure_replay_attempt(state, force_new=False)

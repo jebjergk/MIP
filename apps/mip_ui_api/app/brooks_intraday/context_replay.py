@@ -32,11 +32,14 @@ from .persist_integrity import (
 )
 from .persist_mode import is_bulk_persist
 from .context_engine_v03 import reset_v03_session
+from .context_engine_v04 import reset_v04_session
 from .context_ruleset_v01 import RULESET_VERSION as RULESET_V01
 from .context_ruleset_v02 import DEFAULT_PARAMETERS as V02_DEFAULT_PARAMETERS
 from .context_ruleset_v02 import RULESET_VERSION as RULESET_V02
 from .context_ruleset_v03 import DEFAULT_PARAMETERS as V03_DEFAULT_PARAMETERS
 from .context_ruleset_v03 import RULESET_VERSION as RULESET_V03
+from .context_ruleset_v04 import DEFAULT_PARAMETERS as V04_DEFAULT_PARAMETERS
+from .context_ruleset_v04 import RULESET_VERSION as RULESET_V04
 from .context_ruleset_v01 import ACTION_CONSIDER_ENTRY
 from .errors import BrooksIntradayError
 from .observation_repository import load_baseline_observation_index
@@ -78,14 +81,25 @@ def run_context_replay_bulk(
     ruleset_version: str = RULESET_V01,
     notes: str | None = None,
     on_progress=None,
+    allow_diagnostic_legacy: bool = False,
 ) -> str:
     verify_replay_ready(state)
+    from .lab_execution_policy import require_diagnostic_legacy
+
+    require_diagnostic_legacy(
+        state,
+        f"phase6_context_bulk ({ruleset_version})",
+        allow_diagnostic_legacy=allow_diagnostic_legacy,
+    )
     verify_schedule_bars(state)
     run_id = state["run_id"]
     objective_id, pattern_id = ensure_context_attempt_ids(state)
     state.pop("_context_session_state", None)
 
-    if ruleset_version == RULESET_V03:
+    if ruleset_version == RULESET_V04:
+        default_notes = "V0.4 intraday-led context replay (disposable; not pinned)"
+        params = V04_DEFAULT_PARAMETERS
+    elif ruleset_version == RULESET_V03:
         default_notes = "Phase E V0.3 context replay (disposable; not Freeze V1 pin)"
         params = V03_DEFAULT_PARAMETERS
     elif ruleset_version == RULESET_V02:
@@ -116,13 +130,20 @@ def run_context_replay_bulk(
     prev_td: date | None = None
     state.pop("_context_v03_session_state", None)
     shadow_open_symbol: str | None = None
-    v03_priority = list(V03_DEFAULT_PARAMETERS.get("symbol_priority") or [])
+    v03_priority = list(
+        (V04_DEFAULT_PARAMETERS if ruleset_version == RULESET_V04 else V03_DEFAULT_PARAMETERS).get(
+            "symbol_priority"
+        )
+        or []
+    )
 
     for step_idx, step in enumerate(schedule):
         if prev_td != step.trading_date:
             for s in symbols:
                 reset_context_session(state, s, step.trading_date)
-                if ruleset_version == RULESET_V03:
+                if ruleset_version == RULESET_V04:
+                    reset_v04_session(state, s, step.trading_date)
+                elif ruleset_version == RULESET_V03:
                     reset_v03_session(state, s, step.trading_date)
             prev_td = step.trading_date
             shadow_open_symbol = None
@@ -150,7 +171,7 @@ def run_context_replay_bulk(
                 )
             patterns = pat_index.get(obs_key, [])
             dossier = dossiers_cache[td_key][sym]
-            open_sym = shadow_open_symbol if ruleset_version == RULESET_V03 else None
+            open_sym = shadow_open_symbol if ruleset_version in (RULESET_V03, RULESET_V04) else None
             result = advance_context_for_bar(
                 state=state,
                 dossier=dossier,
@@ -175,7 +196,7 @@ def run_context_replay_bulk(
             )
             seq += 1
 
-        if ruleset_version == RULESET_V03 and shadow_open_symbol is None:
+        if ruleset_version in (RULESET_V03, RULESET_V04) and shadow_open_symbol is None:
             step_ce = [
                 str(sym).upper()
                 for sym, *_rest, res in pending[-len(symbols) :]
@@ -297,10 +318,13 @@ def run_context_replay_bulk(
     seq_hash = context_sequence_hash(run_id, context_attempt_id=context_attempt_id)
     complete_context_attempt(context_attempt_id=context_attempt_id, row_count=row_count, sequence_hash=seq_hash)
 
-    state.setdefault("configuration", {})["context_ruleset_version"] = ruleset_version
     if ruleset_version == RULESET_V02:
+        state.setdefault("configuration", {})["context_ruleset_version"] = ruleset_version
         state["phase6b_context_attempt_id"] = context_attempt_id
         state.setdefault("configuration", {})["phase6b_context_attempt_id"] = context_attempt_id
+    elif ruleset_version == RULESET_V04:
+        state["phase_v04_context_attempt_id"] = context_attempt_id
+        state.setdefault("configuration", {})["phase_v04_context_attempt_id"] = context_attempt_id
     elif ruleset_version == RULESET_V03:
         # Disposable Phase E / E1 attempt — never overwrite Freeze V1 phase6b pin.
         note_text = notes or ""

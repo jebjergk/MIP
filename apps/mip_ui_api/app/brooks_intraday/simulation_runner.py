@@ -21,6 +21,13 @@ from .simulation_engine import (
     tie_break_pick,
 )
 from .simulation_ruleset_v01 import resolve_params
+from .reentry_policy_v01 import (
+    evaluate_reentry_for_consider_entry,
+    get_reentry_tracker,
+    note_reentry_exit,
+    observe_reentry_context_bar,
+    plain_language_for_block,
+)
 
 
 @dataclass
@@ -102,7 +109,7 @@ def run_simulation_fixture(
         for sym in symbol_order:
             bar = step.bars.get(sym)
             if bar:
-                res = fill_pending_exit(portfolio, bar=bar)
+                res = fill_pending_exit(portfolio, bar=bar, bar_index_in_session=step.bar_index_in_session)
                 if res:
                     step_notes["events"].append(f"{sym}:exit_filled_at_open")
 
@@ -121,6 +128,13 @@ def run_simulation_fixture(
                 bar_index_in_session=step.bar_index_in_session,
                 is_last_bar_in_session=step.is_last_bar_in_session,
                 params=params,
+            )
+            observe_reentry_context_bar(
+                portfolio,
+                symbol=sym,
+                trading_date=bar.trading_date,
+                bar_index_in_session=step.bar_index_in_session,
+                ctx=ctx,
             )
             step_notes["actions"][sym] = ctx.get("selected_action")
             if step_res.exit_scheduled:
@@ -147,7 +161,34 @@ def run_simulation_fixture(
                     step_notes["events"].append(f"{sym}:blocked:{block}")
 
             if step_res.entry_candidate:
-                entry_candidates.append({"symbol": sym, "bar": bar, "context": ctx, "dossier": dossier})
+                ok_re, re_block = evaluate_reentry_for_consider_entry(
+                    portfolio,
+                    symbol=sym,
+                    trading_date=bar.trading_date,
+                    bar_index_in_session=step.bar_index_in_session,
+                    ctx=ctx,
+                )
+                if not ok_re and re_block:
+                    st = get_reentry_tracker(portfolio).state_for(sym, bar.trading_date)
+                    bars_since = (
+                        step.bar_index_in_session - st.last_exit_bar_index
+                        if st.last_exit_bar_index is not None
+                        else None
+                    )
+                    record_blocked_entry(
+                        portfolio,
+                        symbol=sym,
+                        signal_ts=bar.ts_utc,
+                        reason=re_block,
+                        candidate_action=entry_action,
+                        tie_break_json={
+                            "reentry_policy": "V0_1",
+                            "plain_language": plain_language_for_block(re_block, bars_since_exit=bars_since),
+                        },
+                    )
+                    step_notes["events"].append(f"{sym}:blocked:{re_block}")
+                else:
+                    entry_candidates.append({"symbol": sym, "bar": bar, "context": ctx, "dossier": dossier})
 
         if entry_candidates:
             if portfolio.open_position is not None:
@@ -204,6 +245,13 @@ def run_simulation_fixture(
                 )
                 portfolio.open_position = None
                 step_notes["events"].append(f"{pos.symbol}:week_end_flatten")
+                note_reentry_exit(
+                    portfolio,
+                    symbol=pos.symbol,
+                    trading_date=bar.trading_date,
+                    bar_index_in_session=step.bar_index_in_session,
+                    exit_reason="FORCED_WEEK_END_FLATTEN",
+                )
 
         step_notes["cash_after"] = portfolio.cash
         step_notes["open_position"] = portfolio.open_position.symbol if portfolio.open_position else None

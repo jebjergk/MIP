@@ -23,6 +23,7 @@ from .objective_ruleset_v01 import DEFAULT_PARAMETERS, RULESET_VERSION
 from .preparation import prepare_run
 from .paa_selection import select_pre_rth_paa
 from .repository import get_dossier, load_dossiers_for_run
+from .lab_execution_policy import adviser_foundation_defaults
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ def create_run(request: CreateRunRequest) -> RunDetail:
             "overnight_holding": False,
             "bar_interval_minutes": 5,
             "replay_integrity": "no_future_bars",
+            **adviser_foundation_defaults(),
         },
     }
     if request.experiment_role:
@@ -397,10 +399,12 @@ def reset_run(run_id: str) -> RunDetail:
     return _mutate_run(run_id, _apply)
 
 
-def reset_pattern_run(run_id: str) -> RunDetail:
+def reset_pattern_run(run_id: str, *, allow_diagnostic_legacy: bool = False) -> RunDetail:
+    from .lab_execution_policy import require_diagnostic_legacy
     from .replay_engine import replay_reset_pattern
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase5_pattern_reset", allow_diagnostic_legacy=allow_diagnostic_legacy)
         replay_reset_pattern(state)
         state["status"] = "READY"
         state["replay_mode"] = "PATTERN"
@@ -408,11 +412,13 @@ def reset_pattern_run(run_id: str) -> RunDetail:
     return _mutate_run(run_id, _apply)
 
 
-def reset_pattern_run_v02(run_id: str) -> RunDetail:
+def reset_pattern_run_v02(run_id: str, *, allow_diagnostic_legacy: bool = False) -> RunDetail:
+    from .lab_execution_policy import require_diagnostic_legacy
     from .pattern_ruleset_v02 import RULESET_VERSION as PATTERN_V02
     from .replay_engine import replay_reset_pattern
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase5_pattern_reset_v02", allow_diagnostic_legacy=allow_diagnostic_legacy)
         state.setdefault("configuration", {})["phase5_pattern_v01_attempt_id"] = (
             state.get("phase5_pattern_v01_attempt_id")
             or state.get("configuration", {}).get("phase5_pattern_v01_attempt_id")
@@ -427,11 +433,13 @@ def reset_pattern_run_v02(run_id: str) -> RunDetail:
     return _mutate_run(run_id, _apply)
 
 
-def reset_pattern_run_v03(run_id: str) -> RunDetail:
+def reset_pattern_run_v03(run_id: str, *, allow_diagnostic_legacy: bool = False) -> RunDetail:
+    from .lab_execution_policy import require_diagnostic_legacy
     from .pattern_ruleset_v03 import RULESET_VERSION as PATTERN_V03
     from .replay_engine import replay_reset_pattern
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase5_pattern_reset_v03", allow_diagnostic_legacy=allow_diagnostic_legacy)
         state.setdefault("configuration", {})["phase4_review_baseline_attempt_id"] = (
             state.get("phase4_review_baseline_attempt_id")
             or state.get("configuration", {}).get("phase4_review_baseline_attempt_id")
@@ -458,69 +466,89 @@ def reset_pattern_run_v03(run_id: str) -> RunDetail:
     return _mutate_run(run_id, _apply)
 
 
-def run_objective_bulk(run_id: str) -> dict[str, Any]:
+def run_objective_bulk(run_id: str, *, allow_diagnostic_legacy: bool = False) -> dict[str, Any]:
+    from .lab_execution_policy import require_diagnostic_legacy
     from .replay_engine import run_objective_replay_bulk
 
     get_run(run_id)
     result_holder: dict[str, Any] = {}
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase4_objective_bulk", allow_diagnostic_legacy=allow_diagnostic_legacy)
         result_holder["objective_attempt_id"] = run_objective_replay_bulk(state, progress_every=50)
 
     _mutate_run(run_id, _apply)
     return {"run_id": run_id, "objective_attempt_id": result_holder.get("objective_attempt_id")}
 
 
-def run_context_bulk(run_id: str) -> dict[str, Any]:
+def run_context_bulk(run_id: str, *, allow_diagnostic_legacy: bool = False) -> dict[str, Any]:
     from .context_replay import run_context_replay_bulk
     from .context_ruleset_v01 import RULESET_VERSION as RULESET_V01
+    from .lab_execution_policy import require_diagnostic_legacy
 
     get_run(run_id)
     result_holder: dict[str, Any] = {}
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase6_context_bulk_v01", allow_diagnostic_legacy=allow_diagnostic_legacy)
         _wire_context_prerequisites(state)
-        result_holder["context_attempt_id"] = run_context_replay_bulk(state, ruleset_version=RULESET_V01)
+        result_holder["context_attempt_id"] = run_context_replay_bulk(
+            state, ruleset_version=RULESET_V01, allow_diagnostic_legacy=allow_diagnostic_legacy
+        )
 
     _mutate_run(run_id, _apply)
     return {"run_id": run_id, "context_attempt_id": result_holder["context_attempt_id"]}
 
 
-def run_context_bulk_v02(run_id: str, *, on_progress=None) -> dict[str, Any]:
+def run_context_bulk_v02(
+    run_id: str, *, on_progress=None, allow_diagnostic_legacy: bool = False
+) -> dict[str, Any]:
     from .context_replay import run_context_replay_bulk
     from .context_ruleset_v02 import RULESET_VERSION as RULESET_V02
+    from .lab_execution_policy import require_diagnostic_legacy
 
     get_run(run_id)
     result_holder: dict[str, Any] = {}
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase6_context_bulk_v02", allow_diagnostic_legacy=allow_diagnostic_legacy)
         _wire_context_prerequisites(state)
         result_holder["context_attempt_id"] = run_context_replay_bulk(
             state,
             ruleset_version=RULESET_V02,
             notes="Phase 6B V0.2 calibrated context replay",
             on_progress=on_progress,
+            allow_diagnostic_legacy=allow_diagnostic_legacy,
         )
 
     _mutate_run(run_id, _apply)
     return {"run_id": run_id, "context_attempt_id": result_holder["context_attempt_id"], "ruleset_version": RULESET_V02}
 
 
-def run_context_bulk_v03(run_id: str, *, on_progress=None, notes: str | None = None) -> dict[str, Any]:
+def run_context_bulk_v03(
+    run_id: str,
+    *,
+    on_progress=None,
+    notes: str | None = None,
+    allow_diagnostic_legacy: bool = False,
+) -> dict[str, Any]:
     """Disposable V0.3 context replay. Does not change Freeze V1 pins or default ruleset."""
     from .context_replay import run_context_replay_bulk
     from .context_ruleset_v03 import RULESET_VERSION as RULESET_V03
+    from .lab_execution_policy import require_diagnostic_legacy
 
     get_run(run_id)
     result_holder: dict[str, Any] = {}
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase6_context_bulk_v03", allow_diagnostic_legacy=allow_diagnostic_legacy)
         _wire_context_prerequisites(state)
         result_holder["context_attempt_id"] = run_context_replay_bulk(
             state,
             ruleset_version=RULESET_V03,
             notes=notes or "Phase E V0.3 context replay (disposable; not Freeze V1 pin)",
             on_progress=on_progress,
+            allow_diagnostic_legacy=allow_diagnostic_legacy,
         )
 
     _mutate_run(run_id, _apply)
@@ -528,6 +556,41 @@ def run_context_bulk_v03(run_id: str, *, on_progress=None, notes: str | None = N
         "run_id": run_id,
         "context_attempt_id": result_holder["context_attempt_id"],
         "ruleset_version": RULESET_V03,
+        "pinned_to_run_config": False,
+    }
+
+
+def run_context_bulk_v04(
+    run_id: str,
+    *,
+    on_progress=None,
+    notes: str | None = None,
+    allow_diagnostic_legacy: bool = False,
+) -> dict[str, Any]:
+    """Disposable V0.4 intraday-led context replay. Does not change official pins."""
+    from .context_replay import run_context_replay_bulk
+    from .context_ruleset_v04 import RULESET_VERSION as RULESET_V04
+    from .lab_execution_policy import require_diagnostic_legacy
+
+    get_run(run_id)
+    result_holder: dict[str, Any] = {}
+
+    def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase6_context_bulk_v04", allow_diagnostic_legacy=allow_diagnostic_legacy)
+        _wire_context_prerequisites(state)
+        result_holder["context_attempt_id"] = run_context_replay_bulk(
+            state,
+            ruleset_version=RULESET_V04,
+            notes=notes or "V0.4 context replay (disposable; not pinned)",
+            on_progress=on_progress,
+            allow_diagnostic_legacy=allow_diagnostic_legacy,
+        )
+
+    _mutate_run(run_id, _apply)
+    return {
+        "run_id": run_id,
+        "context_attempt_id": result_holder["context_attempt_id"],
+        "ruleset_version": RULESET_V04,
         "pinned_to_run_config": False,
     }
 
@@ -552,13 +615,16 @@ def run_simulation_bulk(
     required_context_ruleset: str | None = None,
     notes: str | None = None,
     pin_context_to_run_config: bool = True,
+    allow_diagnostic_legacy: bool = False,
 ) -> dict[str, Any]:
+    from .lab_execution_policy import require_diagnostic_legacy
     from .simulation_replay import run_simulation_replay_bulk
 
     get_run(run_id)
     result_holder: dict[str, Any] = {}
 
     def _apply(state: dict[str, Any]) -> None:
+        require_diagnostic_legacy(state, "phase7_simulation_bulk", allow_diagnostic_legacy=allow_diagnostic_legacy)
         _wire_context_prerequisites(state)
         if pin_context_to_run_config:
             state.setdefault("configuration", {})["phase6b_context_attempt_id"] = context_attempt_id
@@ -567,6 +633,7 @@ def run_simulation_bulk(
             context_attempt_id=context_attempt_id,
             required_context_ruleset=required_context_ruleset,
             notes=notes,
+            allow_diagnostic_legacy=allow_diagnostic_legacy,
         )
         cfg = state.get("configuration") or {}
         from .context_ruleset_v03 import RULESET_VERSION as _V03

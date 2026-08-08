@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,14 +14,28 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from app.brooks_intraday.experiment_phase9_worker import start_phase9_worker
-
+    log = logging.getLogger(__name__)
     try:
-        start_phase9_worker()
-    except Exception:
-        logging.getLogger(__name__).exception(
-            "Brooks Phase 9 worker failed to start — API will run; fix Snowflake/Phase 9 init and restart"
+        from app.brooks_intraday.persist_mode import ENV_PERSIST_MODE, get_persist_mode
+
+        mode = get_persist_mode()
+        log.info(
+            "Brooks Intraday Lab persist mode active=%s (env %s=%r; code default=legacy)",
+            mode,
+            ENV_PERSIST_MODE,
+            os.environ.get(ENV_PERSIST_MODE),
         )
+    except Exception:
+        log.exception("Brooks persist mode log failed")
+    if os.getenv("MIP_PHASE9_WORKER", "").strip().lower() in ("1", "true", "yes"):
+        from app.brooks_intraday.experiment_phase9_worker import start_phase9_worker
+
+        try:
+            start_phase9_worker()
+        except Exception:
+            log.exception(
+                "Brooks Phase 9 worker failed to start — API will run; fix Snowflake/Phase 9 init and restart"
+            )
     yield
 
 

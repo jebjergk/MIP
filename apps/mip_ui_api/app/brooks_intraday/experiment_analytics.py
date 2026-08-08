@@ -381,10 +381,9 @@ def list_validation_run_ids() -> list[dict[str, Any]]:
             """
             SELECT RUN_ID, SELECTED_WEEK_START, STATUS, CONFIG_JSON, STARTING_CASH, ENDING_CASH, REALIZED_PNL
             FROM MIP.APP.BROOKS_INTRADAY_RUN
-            WHERE CONFIG_JSON LIKE %s
+            WHERE CONFIG_JSON:experiment_role::STRING = 'UNSEEN_VALIDATION'
             ORDER BY SELECTED_WEEK_START
-            """,
-            ('%"experiment_role": "UNSEEN_VALIDATION"%',),
+            """
         )
         cols = [d[0].lower() for d in cur.description]
         out = []

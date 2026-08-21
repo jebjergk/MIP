@@ -1,0 +1,386 @@
+{
+  "meta": {
+    "trading_date": "2026-07-24",
+    "evaluation_type": "fresh_day_oos_scorecard",
+    "config": {
+      "ace_lite_patch": 2,
+      "entry_synthesis_patch": 2,
+      "entry_synthesis_contract_version": "1.1"
+    },
+    "attempts": {
+      "CRM": "f76c5f27-b3dd-436e-8935-31520a2c1b21",
+      "MSFT": "88c67578-d99f-4518-b756-ebe7db3a94ac",
+      "NKE": "bcf1aaf0-d700-4cc4-9a1b-93d0eadbe135",
+      "NVDA": "8549c812-5f3d-494b-8d3c-7dd3d0d8e24f"
+    },
+    "fee_assumption_per_round_trip_usd": 2.0,
+    "data_source": "persisted BROOKS_INTRADAY_ADVISER_ATTEMPT/CALL only"
+  },
+  "executive_scorecard": {
+    "CRM": {
+      "symbol": "CRM",
+      "executed_trades": 0,
+      "trades": [],
+      "gross_pnl": 0,
+      "net_pnl": 0,
+      "consider_entries": [
+        {
+          "bar_et": "11:10",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "11:20",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "12:20",
+          "execution_status": "NOT_ACTED_VALID_BUT_PASS",
+          "blocker": "VALID_BUT_PASS",
+          "entry_quality": "STRONG",
+          "trade_worthiness": "VALID_BUT_PASS"
+        }
+      ]
+    },
+    "MSFT": {
+      "symbol": "MSFT",
+      "executed_trades": 1,
+      "trades": [
+        {
+          "entry_et": "13:15",
+          "exit_et": "13:20",
+          "entry_price": 384.29,
+          "exit_price": 383.96,
+          "initial_stop": 383.55,
+          "exit_reason": "THESIS_FAILURE / PATTERN_BASED (failed immediate follow-through; swing_break_low)",
+          "trade_intent": "SWING",
+          "entry_quality": "STRONG",
+          "trade_worthiness": "TRADE_WORTHY",
+          "gross_pnl": -0.66,
+          "fees_est": 2.0,
+          "net_pnl": -2.66,
+          "brooks_class": "BROOKS_STRONG",
+          "brooks_class_reason": "Coherent cycle, confirmation, location, and equation at decision time."
+        }
+      ],
+      "gross_pnl": -0.66,
+      "net_pnl": -2.66,
+      "consider_entries": [
+        {
+          "bar_et": "10:25",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "10:30",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "11:10",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "13:15",
+          "execution_status": "TRADE",
+          "blocker": null,
+          "entry_quality": "STRONG",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "15:10",
+          "execution_status": "NOT_ACTED_DAILY_SYMBOL_TICKET_CONSUMED",
+          "blocker": "DAILY_SYMBOL_TICKET_CONSUMED",
+          "entry_quality": "STRONG",
+          "trade_worthiness": "TRADE_WORTHY"
+        }
+      ]
+    },
+    "NKE": {
+      "symbol": "NKE",
+      "executed_trades": 1,
+      "trades": [
+        {
+          "entry_et": "14:45",
+          "exit_et": "15:55",
+          "entry_price": 41.93,
+          "exit_price": 41.6,
+          "initial_stop": 41.76,
+          "exit_reason": "THESIS_FAILURE / STRUCTURAL_BREACH (close below pullback low 41.69)",
+          "trade_intent": "SWING",
+          "entry_quality": "ACCEPTABLE",
+          "trade_worthiness": "TRADE_WORTHY",
+          "gross_pnl": -7.59,
+          "fees_est": 2.0,
+          "net_pnl": -9.59,
+          "brooks_class": "BROOKS_REASONABLE",
+          "brooks_class_reason": "Valid Brooks structure with acceptable but non-standout quality; marginal R:R acknowledged at entry."
+        }
+      ],
+      "gross_pnl": -7.59,
+      "net_pnl": -9.59,
+      "consider_entries": [
+        {
+          "bar_et": "09:45",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "10:55",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "11:10",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "14:45",
+          "execution_status": "TRADE",
+          "blocker": null,
+          "entry_quality": "ACCEPTABLE",
+          "trade_worthiness": "TRADE_WORTHY"
+        }
+      ]
+    },
+    "NVDA": {
+      "symbol": "NVDA",
+      "executed_trades": 0,
+      "trades": [],
+      "gross_pnl": 0,
+      "net_pnl": 0,
+      "consider_entries": [
+        {
+          "bar_et": "10:50",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "10:55",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "12:00",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "12:05",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "TRADE_WORTHY"
+        },
+        {
+          "bar_et": "15:40",
+          "execution_status": "NOT_ACTED_MARGINAL",
+          "blocker": "MARGINAL",
+          "entry_quality": "MARGINAL",
+          "trade_worthiness": "VALID_BUT_PASS"
+        }
+      ]
+    }
+  },
+  "decision_time_brooks_evaluation": [
+    {
+      "symbol": "MSFT",
+      "bar_et": "13:15",
+      "brooks_class": "BROOKS_STRONG",
+      "reason": "Coherent cycle, confirmation, location, and equation at decision time.",
+      "dimensions": {
+        "market_cycle": "Intraday session is in TRADING_RANGE with neutral always-in bias. Session high is 389.03, session low is 380.65, pullback low is 383.49. Price is currently 384.29, near the middle of the range. The cycle is characterized by two-sided trading (4 bull bars, 4 bear bars in recent 8-bar window) with tight overlap and no directional breakout. This is a mature range environment where pullback-to-support entries are appropriate Brooks setups.",
+        "always_in_control": "Always-in bias is NEUTRAL in both slow_context_regime and intraday_regime. This means no directional bias from higher timeframe; trade only with intraday structure. The pullback-to-support setup is valid in neutral bias because it is a reversal structure (signal bar breakout + pullback hold), not a trend-following entry. Neutral bias does not prohibit reversals; it requires stronger intraday evidence, which is present (signal bar + pullback confirmation).",
+        "location": "Price is 384.29, located 4.74 points below session high (389.03) and 3.64 points above session low (380.65). Support cluster (381.71\u2013382.27) is 0.11% below current price (very close). This location is ideal for pullback-to-support entry: price has pulled back from swing high (383.49) to support cluster and is holding. Room to upside is ~4.74 points to session high; room to downside (stop) is ~2.58 points to support cluster low (381.71). Risk-reward ratio is approximately 1:1.8 (favorable for Brooks trader's equation).",
+        "opposing_evidence": "Recent bar evidence shows tight overlap and alternating bull/bear bars, indicating indecision and range-bound behavior. The 13:15 bar is small (body_fraction 0.0417, range 0.24), suggesting weak follow-through after the strong 13:10 signal bar. This could indicate exhaustion or consolidation rather than strong bull continuation. However, the small bar is consistent with pullback behavior in a range; it does not invalidate the pullback structure. Daily PAA is NO_CLEAR_LONG, which is cautious context but not a veto. The opposing evidence is weak indecision, not strong bear reversal.",
+        "traders_equation": "Probability: Signal bar (13:10) is a strong bull breakout with high body_fraction (0.7544) and close_location (0.9825), indicating conviction. Pullback hold (13:15) confirms reversal intent. In a trading range with support cluster hold, probability of upside continuation is moderate-to-good (pullback-to-support is a high-probability Brooks setup). Reward: Room to session high is ~4.74 points; room to measured move or next resistance is potentially higher. Risk: Stop below support cluster (381.71) is ~2.58 points. Reward-to-risk ratio is approximately 1.8:1, which meets Brooks trader's equation threshold (at least 1:1, preferably higher). Structural risk is defined and manageable.",
+        "setup": "This is a valid Brooks BREAKOUT_PULLBACK setup (pullback-to-support after breakout of swing high). Signal bar (13:10) is a strong bull breakout above swing high (383.49) with swing_break_high flag. Pullback leg (13:15) holds above support cluster (381.71\u2013382.27) with bullish close. The setup is mechanically sound: breakout + pullback hold = reversal confirmation. Setup quality is ACCEPTABLE (not STRONG because of small 13:15 bar and tight range context, but valid and executable).",
+        "confirmation": "Mandatory confirmation contract is SATISFIED. PULLBACK_LEG_COMPLETED predicate is satisfied at 13:15 bar (price pulled back to support cluster 381.71\u2013382.27 and held with bullish close 384.29). No additional confirmations are pending. Entry is ready.",
+        "trade_worthiness": "TRADE_WORTHY"
+      }
+    },
+    {
+      "symbol": "NKE",
+      "bar_et": "14:45",
+      "brooks_class": "BROOKS_REASONABLE",
+      "reason": "Valid Brooks structure with acceptable but non-standout quality; marginal R:R acknowledged at entry.",
+      "dimensions": {
+        "market_cycle": "Intraday market is in STRONG_BULL_TREND with always-in bias LONG. Session high is 42.15, session low 40.88, pullback low 41.69. Price has broken above prior swing highs (41.85, 42.00) and is consolidating within the bull flag structure. Cycle is mature bull trend transitioning into consolidation/pullback-hold phase\u2014typical setup for breakout-pullback entry.",
+        "always_in_control": "Intraday always-in bias is LONG. Slow context regime (STRONG_BULL_TREND) and intraday regime (STRONG_BULL_TREND) both support long bias. No conflicting always-in signals. Entry is aligned with trend direction.",
+        "location": "Price is at 41.93, above pullback low (41.69), above session open (41.19), and within the bull flag consolidation zone (41.82\u201341.97). Location is within the pullback-hold structure, not at an extreme or exhaustion level. Room to session high (42.15) is +0.22 (0.53% upside). Room to prior swing high (41.85) is already exceeded. Location is acceptable for entry; price is not at a major resistance or exhaustion point.",
+        "opposing_evidence": "Current bar (14:45) is bearish (close 41.93, body fraction 0.33, range 0.09) and closes below the signal bar (14:40, close 41.96). This is a pullback/consolidation bar, not a follow-through bar. Mechanical summary shows only 4 bull bars in 8 bars; recent consecutive bull bars max is 2 (14:35\u201314:40). No new session high or swing break high on current bar. Daily PAA is NO_CLEAR_LONG, indicating daily context is cautious. However, the current bar is a normal consolidation bar within the pullback-hold structure, not a reversal or invalidation. The pullback low (41.69) remains intact. Opposing evidence is mild and consistent with pullback-hold consolidation, not a failed setup.",
+        "traders_equation": "Probability: Pullback-hold structure in strong bull trend has moderate-to-good probability of follow-through. Signal bar (14:40) was bullish and closed above prior swing high; pullback low held and reversed upward. Structural probability is favorable. Risk: Stop loss would be placed below pullback low (41.69) or intraday swing low (41.64), approximately 0.24\u20130.29 risk from entry (41.93). Reward: Upside target is session high (42.15) or higher, approximately +0.22 upside (0.53% reward). Reward-to-risk ratio is approximately 0.76\u20130.92 (marginal to acceptable). Room to obstacle: Price has room to session high (42.15) and potential breakout above. No immediate overhead resistance until session high. Realistic reward is moderate; risk is small. Trader's equation is acceptable but not exceptional\u2014probability is good, reward-to-risk is marginal.",
+        "setup": "Setup is a valid Brooks breakout-pullback structure: bull flag breakout (14:35 high 41.92, 14:40 high 42.00) followed by pullback consolidation (14:30\u201314:45 range 41.82\u201341.97) with pullback low held (41.69). Signal bar (14:40) is bullish, closes above prior swing high (41.85), and establishes a bull signal. Pullback low (41.69) is held and reversed upward at bar 63 (14:40 close 41.96 > 41.69). Setup is ACCEPTABLE quality: valid structure, confirmed pullback-hold, but current bar is a consolidation bar (not a follow-through bar), and reward-to-risk is marginal. Setup is not STRONG (would require immediate follow-through bar or larger room to obstacle).",
+        "confirmation": "Mandatory confirmation contract is satisfied: PULLBACK_LEG_COMPLETED predicate is satisfied at bar 63 (14:40 close 41.96 > pullback low 41.69). No additional confirmations are pending on this bar. Confirmation is complete and frozen. Entry is actionable on this bar (14:45).",
+        "trade_worthiness": "TRADE_WORTHY"
+      }
+    }
+  ],
+  "missed_opportunity_review": [
+    {
+      "symbol": "NKE",
+      "time_window": "10:20\u201311:25",
+      "market_structure": "Morning bull leg from ~40.88 toward session high; two-legged breakout-pullback-follow-through.",
+      "cycle_control_recognized": true,
+      "watch_arm": "ARM_LONG 10:30, 10:50",
+      "consider_entry": "10:55, 11:10",
+      "blocker": "quality (MARGINAL: near_session_high_extension; 10:55 also trading_range_without_textbook_structure)",
+      "brooks_coherent_pass": true,
+      "classification": "MISSED_BUT_DEBATABLE",
+      "note": "Small absolute move; buying at session-high extension in sub-$1 range is a defensible Brooks pass despite strong mechanical setup."
+    },
+    {
+      "symbol": "NVDA",
+      "time_window": "10:50\u201312:05",
+      "market_structure": "Range breakout then strong intraday bull trend to 211+.",
+      "cycle_control_recognized": true,
+      "watch_arm": "Multiple ARM cycles",
+      "consider_entry": "10:50, 10:55, 12:00, 12:05",
+      "blocker": "quality (MARGINAL: near session high / extension entries)",
+      "brooks_coherent_pass": true,
+      "classification": "LEGITIMATE_PASS",
+      "note": "Repeated extension-at-high CONSIDER_ENTRY blocked by quality gate; consistent selective discipline, not a missed structural entry at support."
+    },
+    {
+      "symbol": "CRM",
+      "time_window": "11:00\u201312:00",
+      "market_structure": "Strong bull trend to new session highs.",
+      "cycle_control_recognized": true,
+      "watch_arm": true,
+      "consider_entry": "11:10, 11:20, 12:20 (VALID_BUT_PASS)",
+      "blocker": "quality MARGINAL or synthesis VALID_BUT_PASS",
+      "brooks_coherent_pass": true,
+      "classification": "LEGITIMATE_PASS"
+    }
+  ],
+  "nke_special_review": {
+    "timeline": [
+      {
+        "bar_et": "10:30",
+        "action": "ARM_LONG",
+        "wake": "PRICE_ACTION_CHARACTER_CHANGE"
+      },
+      {
+        "bar_et": "10:50",
+        "action": "ARM_LONG",
+        "wake": "THESIS_WATCH_CONDITION_MET"
+      },
+      {
+        "bar_et": "10:55",
+        "action": "CONSIDER_ENTRY",
+        "wake": "PRICE_ACTION_CHARACTER_CHANGE"
+      },
+      {
+        "bar_et": "11:10",
+        "action": "CONSIDER_ENTRY",
+        "wake": "PRICE_ACTION_CHARACTER_CHANGE"
+      },
+      {
+        "bar_et": "11:30",
+        "action": "HOLD",
+        "wake": "PRICE_ACTION_CHARACTER_CHANGE"
+      },
+      {
+        "bar_et": "11:40",
+        "action": "INVALIDATE",
+        "wake": "PRICE_ACTION_CHARACTER_CHANGE"
+      },
+      {
+        "bar_et": "14:40",
+        "action": "ARM_LONG",
+        "wake": "PRICE_ACTION_CHARACTER_CHANGE"
+      },
+      {
+        "bar_et": "14:45",
+        "action": "CONSIDER_ENTRY",
+        "wake": "CONFIRMATION_COMPLETE"
+      }
+    ],
+    "bull_control_morning": "Mostly yes \u2014 regime progressed TRADING_RANGE \u2192 INTRADAY_BULL_BREAKOUT \u2192 STRONG_BULL_TREND by 11:10; ARM and CONSIDER_ENTRY fired.",
+    "why_1055_1110_not_executed": "NOT_ACTED_MARGINAL \u2014 brooks_entry_quality MARGINAL despite TRADE_WORTHY synthesis (near_session_high_extension).",
+    "morning_passes_brooks_coherent": true,
+    "afternoon_vs_morning": "Different and modestly better methodologically: afternoon 14:45 was pullback-hold in STRONG_BULL_TREND (ACCEPTABLE, not MARGINAL), not session-high extension chase.",
+    "ace_lite_continuity_evidence": "No material continuity break; 11:40 INVALIDATE on trend weakening was lifecycle-coherent; afternoon re-arm was a new setup family.",
+    "outcome_not_defect_proxy": true
+  },
+  "exit_risk_management_review": [
+    {
+      "symbol": "MSFT",
+      "entry_et": "13:15",
+      "exit_et": "13:20",
+      "gross_pnl": -0.66,
+      "management_class": "GOOD_CONTROLLED_LOSS",
+      "reason": "Loss contained; exit on thesis failure with structural/pattern basis, not runaway hold."
+    },
+    {
+      "symbol": "NKE",
+      "entry_et": "14:45",
+      "exit_et": "15:55",
+      "gross_pnl": -7.59,
+      "management_class": "GOOD_CONTROLLED_LOSS",
+      "reason": "Loss contained; exit on thesis failure with structural/pattern basis, not runaway hold."
+    }
+  ],
+  "architecture_health": {
+    "none": [
+      "No loss of market-cycle continuity requiring engineering reopen.",
+      "No PAA veto of executed entries.",
+      "No invented probability/R thresholds blocking trades.",
+      "No execution/persistence anomalies on completed sessions."
+    ],
+    "observation": [
+      "NKE: ADVISER_MANAGEMENT_EVIDENCE_MISMATCH on HOLD bars (narrative 'consecutive_bears' vs packet max_consecutive_bear_since_entry \u22641) \u2014 non-blocking.",
+      "NKE exit: thesis_failure_reference_bar_not_found warning \u2014 exit still structurally supported.",
+      "Multiple SETUP_CONTRACT_REJECTED events (unsupported predicate types) \u2014 normal contract hygiene, setups re-armed successfully.",
+      "Quality vs synthesis split (TRADE_WORTHY + MARGINAL quality \u2192 NOT_ACTED) \u2014 by design on 7/24.",
+      "PAA NO_CLEAR_LONG present all day; daily_bias_role=higher_timeframe_context_only \u2014 not acting as veto.",
+      "NKE 10:55 synthesis market_cycle still TRADING_RANGE while call state INTRADAY_BULL_BREAKOUT \u2014 minor cycle label lag."
+    ],
+    "material_defect": []
+  },
+  "fresh_day_verdict": {
+    "verdict": "AMBER \u2014 CONTINUE, BUT WATCH",
+    "q1_positive_gross_edge": "No \u2014 2 trades, 0 wins, gross \u2212$8.25.",
+    "q2_contained_failed_trades": "Yes \u2014 MSFT \u2212$0.66 in 5 minutes on thesis failure; NKE \u2212$7.59 exited on structural breach, not open-ended hold.",
+    "q3_material_missed_for_methodology": "No clear MATERIAL_MISSED \u2014 NKE morning blocked on extension quality is debatable but Brooks-coherent.",
+    "q4_defect_stop_validation": "No material repeated defect observed.",
+    "q5_next_block_without_changes": "Yes \u2014 proceed to next fresh validation block; monitor extension-entry quality gate behavior."
+  },
+  "aggregate": {
+    "trades": 2,
+    "wins": 0,
+    "losses": 2,
+    "gross_pnl": -8.25,
+    "total_fees_est": 4.0,
+    "net_pnl": -12.25,
+    "avg_winner": null,
+    "avg_loser": -4.125,
+    "payoff_ratio": null,
+    "profit_factor": 0.0
+  }
+}
